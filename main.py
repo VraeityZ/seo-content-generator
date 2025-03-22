@@ -44,115 +44,125 @@ def initialize_api_clients(claude_api, openai_api):
 # UPLOAD FILE
 ##############################################################################
 def upload_file():
-    """Prompts the user to upload an Excel file containing the CORA report."""
-    uploaded = None
-    return uploaded
+    """A placeholder function for compatibility. In Streamlit, file upload is handled directly by the Streamlit UI."""
+    return None
 
 ##############################################################################
 # PARSE CORA REPORT
 ##############################################################################
 def parse_cora_report(file_path):
-    """Parses the CORA report Excel file to extract URL, variations, requirements, LSI keywords, entities, and word count."""
-    df = pd.read_excel(file_path, sheet_name="Roadmap", header=None, dtype=str).fillna("")
-    url = df.iloc[0, 0].strip()
-    if not url.lower().startswith("http"):
-        raise ValueError(f"Cell A1 does not look like a valid URL: {url}")
-
-    # Check if the URL contains location indicators
-    location_info = extract_location_from_url(url)
-
-    raw_variations = df.iloc[1, 0].strip()
-    variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()] if raw_variations else []
-    marker_start = "Phase 1: Title & Headings"
-    possible_end_markers = [
-        "Phase 2: Content",
-        "Phase 3: Authority",
-        "Phase 4: Diversity",
-        "Phase 6: Search Result Presentation",
-        "Phase 7: Outbound Linking From the Page"
-    ]
-    start_idx = df.index[df[0].str.strip() == marker_start].tolist()[0] + 1
-    end_idx = None
-    for marker in possible_end_markers:
-        end_matches = df.index[df[0].str.strip() == marker].tolist()
-        if end_matches:
-            end_idx = end_matches[0]
-            break
-    if end_idx is None:
-        end_idx = df.shape[0]
-    requirements = {}
-    for idx in range(start_idx, end_idx):
-        req_desc = df.iloc[idx, 0].strip()
-        req_amount_text = df.iloc[idx, 1].strip() if df.shape[1] > 1 else ""
-        if req_desc and req_amount_text:
-            match = re.search(r"(\d+)", req_amount_text)
-            if match:
-                amount = int(match.group(1))
-                requirements[req_desc] = amount
-
-    # Extract word count from Basic Tunings sheet
+    """Parses a CORA Excel report and extracts the SEO requirements."""
     try:
-        basic_tunings_df = pd.read_excel(file_path, sheet_name="Basic Tunings", header=None)
-        cp492_row = basic_tunings_df[basic_tunings_df[1] == "CP492"].index
-        if not cp492_row.empty:
-            word_count = int(basic_tunings_df.iloc[cp492_row[0], 4])
+        # Read the Excel file (main sheet)
+        # For Streamlit compatibility: handle both file paths and BytesIO objects
+        if isinstance(file_path, str):
+            df = pd.read_excel(file_path, engine="openpyxl")
         else:
-            word_count = 2000
-    except Exception as e:
-        print(f"Warning: Could not extract word count - {e}")
-        word_count = 2000
+            # If it's a file object (from Streamlit), convert to BytesIO
+            df = pd.read_excel(file_path, engine="openpyxl")
+            
+        url = df.iloc[0, 0].strip()
+        if not url.lower().startswith("http"):
+            raise ValueError(f"Cell A1 does not look like a valid URL: {url}")
 
-    # Override heading requirements if controls are set
-    # Define heading controls (assumed to be defined elsewhere in your script)
-    heading_controls = {
-        2: h2_control,  # e.g., 2
-        3: h3_control,  # e.g., 3
-        4: h4_control,  # e.g., 3
-        5: h5_control,  # e.g., 0
-        # Add 6: h6_control if needed
-    }
+        # Check if the URL contains location indicators
+        location_info = extract_location_from_url(url)
 
-    # Remove specific overridden heading requirements
-    for level, control in heading_controls.items():
-        if control > 0:  # If an override is active
-            for key in list(requirements.keys()):
-                if f"number of h{level} tags" in key.lower():
-                    del requirements[key]  # Remove the original requirement
+        raw_variations = df.iloc[1, 0].strip()
+        variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()] if raw_variations else []
+        marker_start = "Phase 1: Title & Headings"
+        possible_end_markers = [
+            "Phase 2: Content",
+            "Phase 3: Authority",
+            "Phase 4: Diversity",
+            "Phase 6: Search Result Presentation",
+            "Phase 7: Outbound Linking From the Page"
+        ]
+        start_idx = df.index[df[0].str.strip() == marker_start].tolist()[0] + 1
+        end_idx = None
+        for marker in possible_end_markers:
+            end_matches = df.index[df[0].str.strip() == marker].tolist()
+            if end_matches:
+                end_idx = end_matches[0]
+                break
+        if end_idx is None:
+            end_idx = df.shape[0]
+        requirements = {}
+        for idx in range(start_idx, end_idx):
+            req_desc = df.iloc[idx, 0].strip()
+            req_amount_text = df.iloc[idx, 1].strip() if df.shape[1] > 1 else ""
+            if req_desc and req_amount_text:
+                match = re.search(r"(\d+)", req_amount_text)
+                if match:
+                    amount = int(match.group(1))
+                    requirements[req_desc] = amount
 
-    # Adjust "Number of Heading Tags" if present
-    if "Number of Heading Tags" in requirements:
-        total_headings = 1  # Start with 1 for H1
-        for level in range(2, 7):  # Check H2 to H6
-            control = heading_controls.get(level, 0)  # Get override value, default to 0
-            if control > 0:
-                total_headings += control  # Add override value
+        # Extract word count from Basic Tunings sheet
+        try:
+            basic_tunings_df = pd.read_excel(file_path, sheet_name="Basic Tunings", header=None)
+            cp492_row = basic_tunings_df[basic_tunings_df[1] == "CP492"].index
+            if not cp492_row.empty:
+                word_count = int(basic_tunings_df.iloc[cp492_row[0], 4])
             else:
-                # Check for non-overridden heading requirement
-                for key in requirements:
+                word_count = 2000
+        except Exception as e:
+            print(f"Warning: Could not extract word count - {e}")
+            word_count = 2000
+
+        # Override heading requirements if controls are set
+        # Define heading controls (assumed to be defined elsewhere in your script)
+        heading_controls = {
+            2: h2_control,  # e.g., 2
+            3: h3_control,  # e.g., 3
+            4: h4_control,  # e.g., 3
+            5: h5_control,  # e.g., 0
+            # Add 6: h6_control if needed
+        }
+
+        # Remove specific overridden heading requirements
+        for level, control in heading_controls.items():
+            if control > 0:  # If an override is active
+                for key in list(requirements.keys()):
                     if f"number of h{level} tags" in key.lower():
-                        total_headings += requirements[key]  # Add original value
-                        break
-        requirements["Number of Heading Tags"] = total_headings  # Update total
+                        del requirements[key]  # Remove the original requirement
 
-    # Define heading override instructions
-    heading_overrides = []
-    for level, control in heading_controls.items():
-        if control > 0:
-            heading_overrides.append(f"Important: Headings override. Ignore Number of H{level} required. Instead use {control}")
+        # Adjust "Number of Heading Tags" if present
+        if "Number of Heading Tags" in requirements:
+            total_headings = 1  # Start with 1 for H1
+            for level in range(2, 7):  # Check H2 to H6
+                control = heading_controls.get(level, 0)  # Get override value, default to 0
+                if control > 0:
+                    total_headings += control  # Add override value
+                else:
+                    # Check for non-overridden heading requirement
+                    for key in requirements:
+                        if f"number of h{level} tags" in key.lower():
+                            total_headings += requirements[key]  # Add original value
+                            break
+            requirements["Number of Heading Tags"] = total_headings  # Update total
 
-    lsi_dict = extract_lsi_keywords(file_path)
-    entities_list = extract_entities(file_path)
+        # Define heading override instructions
+        heading_overrides = []
+        for level, control in heading_controls.items():
+            if control > 0:
+                heading_overrides.append(f"Important: Headings override. Ignore Number of H{level} required. Instead use {control}")
 
-    return {
-        "url": url,
-        "variations": variations_list,
-        "requirements": requirements,
-        "lsi_keywords": lsi_dict,
-        "entities": entities_list,
-        "location": location_info,
-        "word_count": word_count,
-        "heading_overrides": heading_overrides
-    }
+        lsi_dict = extract_lsi_keywords(file_path)
+        entities_list = extract_entities(file_path)
+
+        return {
+            "url": url,
+            "variations": variations_list,
+            "requirements": requirements,
+            "lsi_keywords": lsi_dict,
+            "entities": entities_list,
+            "location": location_info,
+            "word_count": word_count,
+            "heading_overrides": heading_overrides
+        }
+    except Exception as e:
+        print(f"Error parsing CORA report: {e}")
+        raise
 
 ##############################################################################
 # EXTRACT LOCATION FROM URL
@@ -178,36 +188,82 @@ def extract_location_from_url(url):
 MAX_LSI_KEYWORDS = 40
 
 def extract_lsi_keywords(file_path):
-    """Extracts up to 40 LSI keywords from the CORA report."""
-    possible_sheets = ["LSI Keywords", "LSI Keyword", "LSI_Keywords", "LSI_Keyword"]
-    with pd.ExcelFile(file_path) as xls:
-        sheet_to_use = next((s for s in possible_sheets if s in xls.sheet_names), None)
-        if not sheet_to_use:
-            raise ValueError(f"No LSI sheet found. Available sheets: {xls.sheet_names}")
-    df = pd.read_excel(file_path, sheet_name=sheet_to_use, header=6).sort_values(by="Avg", ascending=False)
-    lsi_data = {}
-    for _, row in df.iterrows():
-        kw = str(row.get("LSI Keyword", "")).strip()
-        if kw:
+    """Extracts LSI keywords from the CORA report, gracefully handling empty data."""
+    try:
+        # Handle different file path types
+        if isinstance(file_path, str):
             try:
-                avg = float(row.get("Avg", 0))
-                deficit = float(row.get("Deficit", 0)) if pd.notna(row.get("Deficit")) else 0
-                if deficit > 0:
-                    lsi_data[kw] = math.ceil(avg + deficit)
-            except (ValueError, TypeError):
-                continue
-    return dict(list(lsi_data.items())[:MAX_LSI_KEYWORDS])
+                xl = pd.ExcelFile(file_path, engine="openpyxl")
+            except:
+                print("Warning: Could not open LSI Keywords sheet")
+                return []
+        else:
+            # Handle Streamlit's UploadedFile object
+            import io
+            if hasattr(file_path, 'getvalue'):
+                bytes_data = file_path.getvalue()
+                xl = pd.ExcelFile(io.BytesIO(bytes_data), engine="openpyxl")
+            else:
+                xl = pd.ExcelFile(file_path, engine="openpyxl")
+
+        # Check if LSI Keywords sheet exists
+        if "LSI Keywords" not in xl.sheet_names:
+            print("Warning: LSI Keywords sheet not found in Excel file")
+            return []
+        
+        # Load the LSI Keywords sheet
+        df = pd.read_excel(xl, sheet_name="LSI Keywords", header=None)
+        
+        # Extract keywords from first column
+        keywords = []
+        for i in range(len(df)):
+            if not pd.isna(df.iloc[i, 0]) and df.iloc[i, 0] != "":
+                keywords.append(df.iloc[i, 0])
+        
+        return keywords
+    except Exception as e:
+        print(f"Error extracting LSI keywords: {e}")
+        return []
 
 ##############################################################################
 # EXTRACT ENTITIES
 ##############################################################################
 def extract_entities(file_path):
-    """Extracts entities from the Entities sheet of the CORA report."""
+    """Extracts entities from the CORA report, gracefully handling empty data."""
     try:
-        df = pd.read_excel(file_path, sheet_name="Entities", header=2)
-        return [str(e).strip() for e in df.iloc[:, 0].dropna().tolist() if str(e).strip()]
+        # Handle different file path types
+        if isinstance(file_path, str):
+            try:
+                xl = pd.ExcelFile(file_path, engine="openpyxl")
+            except:
+                print("Warning: Could not open Entity Mentions sheet")
+                return []
+        else:
+            # Handle Streamlit's UploadedFile object
+            import io
+            if hasattr(file_path, 'getvalue'):
+                bytes_data = file_path.getvalue()
+                xl = pd.ExcelFile(io.BytesIO(bytes_data), engine="openpyxl")
+            else:
+                xl = pd.ExcelFile(file_path, engine="openpyxl")
+        
+        # Check if Entity Mentions sheet exists
+        if "Entity Mentions" not in xl.sheet_names:
+            print("Warning: Entity Mentions sheet not found in Excel file")
+            return []
+        
+        # Load the Entity Mentions sheet
+        df = pd.read_excel(xl, sheet_name="Entity Mentions", header=None)
+        
+        # Extract entities from first column
+        entities = []
+        for i in range(len(df)):
+            if not pd.isna(df.iloc[i, 0]) and df.iloc[i, 0] != "":
+                entities.append(df.iloc[i, 0])
+        
+        return entities
     except Exception as e:
-        print(f"Warning: Could not extract entities - {e}")
+        print(f"Error extracting entities: {e}")
         return []
 
 ##############################################################################
