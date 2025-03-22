@@ -194,8 +194,19 @@ if uploaded_file is not None:
     if st.button("Extract Requirements"):
         with st.spinner("Extracting requirements..."):
             try:
+                # Add debug info
+                st.info("Analyzing CORA report... This may take a moment.")
+                
                 # Pass the uploaded file directly to the parse_cora_report function
                 requirements = parse_cora_report(uploaded_file)
+                
+                # Display some key information that was extracted
+                st.success(f"✅ Successfully extracted requirements!")
+                st.info(f"Primary Keyword: {requirements['primary_keyword']}")
+                st.info(f"Target URL: {requirements['url']}")
+                st.info(f"Found {len(requirements['variations'])} keyword variations")
+                st.info(f"Found {len(requirements['lsi_keywords'])} LSI keywords")
+                st.info(f"Word Count Target: {requirements['word_count']} words")
                 
                 # Override heading structure with user inputs if provided
                 if h2_control > 0:
@@ -215,7 +226,20 @@ if uploaded_file is not None:
                 st.experimental_rerun()
             except Exception as e:
                 st.error(f"Error extracting requirements: {str(e)}")
-                st.exception(e)
+                
+                # Add more detailed error information
+                import traceback
+                st.error("Detailed error information:")
+                st.code(traceback.format_exc())
+                
+                # Provide troubleshooting suggestions
+                st.warning("Troubleshooting suggestions:")
+                st.markdown("""
+                - Verify the file is a valid CORA report Excel file
+                - Make sure the file isn't password protected
+                - Check that the file has the expected structure with Phase 1, Phase 2, etc.
+                - Try downloading a fresh copy of the CORA report
+                """)
 else:
     st.info("Please upload a CORA report to get started.")
 

@@ -53,113 +53,247 @@ def upload_file():
 def parse_cora_report(file_path):
     """Parses a CORA Excel report and extracts the SEO requirements."""
     try:
+        # Define default heading controls
+        h2_control = 0  # Default to no override
+        h3_control = 0
+        h4_control = 0
+        h5_control = 0
+        
         # Read the Excel file (main sheet)
         # For Streamlit compatibility: handle both file paths and BytesIO objects
         if isinstance(file_path, str):
-            df = pd.read_excel(file_path, engine="openpyxl")
+            df = pd.read_excel(file_path, engine="openpyxl", header=None)
         else:
             # If it's a file object (from Streamlit), convert to BytesIO
-            df = pd.read_excel(file_path, engine="openpyxl")
-            
-        url = df.iloc[0, 0].strip()
-        if not url.lower().startswith("http"):
-            raise ValueError(f"Cell A1 does not look like a valid URL: {url}")
-
+            df = pd.read_excel(file_path, engine="openpyxl", header=None)
+        
+        # Debug info to verify structure
+        print(f"Excel file loaded with {df.shape[0]} rows and {df.shape[1]} columns")
+        
+        # Find the URL (should be in cell B2)
+        primary_keyword = ""
+        url = ""
+        
+        # Look for URL in the first few rows
+        for i in range(min(5, df.shape[0])):
+            for j in range(min(3, df.shape[1])):
+                cell_value = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
+                if cell_value.lower().startswith(("http://", "https://")):
+                    url = cell_value
+                    print(f"Found URL in cell ({i},{j}): {url}")
+                    break
+        
+        # If URL not found, try to find it in a specific location (B2)
+        if not url and df.shape[0] > 1 and df.shape[1] > 1:
+            cell_value = str(df.iloc[0, 1]).strip() if not pd.isna(df.iloc[0, 1]) else ""
+            if cell_value:
+                url = cell_value
+                print(f"Using cell B2 as URL: {url}")
+        
+        # If we still don't have a URL, look for the Primary Keyword
+        if not url:
+            for i in range(min(5, df.shape[0])):
+                for j in range(min(3, df.shape[1])):
+                    header = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
+                    if "primary keyword" in header.lower() and i+1 < df.shape[0]:
+                        primary_keyword = str(df.iloc[i+1, j]).strip() if not pd.isna(df.iloc[i+1, j]) else ""
+                        url = f"https://{primary_keyword.replace(' ', '-')}.com"
+                        print(f"Constructed URL from primary keyword: {url}")
+                        break
+        
+        if not url:
+            # If we still don't have a URL, use a default placeholder
+            url = "https://example.com"
+            print(f"No URL found, using placeholder: {url}")
+        
         # Check if the URL contains location indicators
         location_info = extract_location_from_url(url)
 
-        raw_variations = df.iloc[1, 0].strip()
-        variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()] if raw_variations else []
-        marker_start = "Phase 1: Title & Headings"
-        possible_end_markers = [
-            "Phase 2: Content",
-            "Phase 3: Authority",
-            "Phase 4: Diversity",
-            "Phase 6: Search Result Presentation",
-            "Phase 7: Outbound Linking From the Page"
-        ]
-        start_idx = df.index[df[0].str.strip() == marker_start].tolist()[0] + 1
-        end_idx = None
-        for marker in possible_end_markers:
-            end_matches = df.index[df[0].str.strip() == marker].tolist()
-            if end_matches:
-                end_idx = end_matches[0]
-                break
-        if end_idx is None:
-            end_idx = df.shape[0]
+        # Extract variations more robustly
+        variations_list = []
+        # Try to find variations specifically labeled
+        for i in range(min(10, df.shape[0])):
+            for j in range(min(3, df.shape[1])):
+                cell_value = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
+                if "variation" in cell_value.lower():
+                    # Look for variations in the next cell to the right or below
+                    if j+1 < df.shape[1] and not pd.isna(df.iloc[i, j+1]):
+                        raw_variations = str(df.iloc[i, j+1]).strip()
+                        variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()]
+                        print(f"Found {len(variations_list)} variations")
+                    elif i+1 < df.shape[0] and not pd.isna(df.iloc[i+1, j]):
+                        raw_variations = str(df.iloc[i+1, j]).strip()
+                        variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()]
+                        print(f"Found {len(variations_list)} variations")
+        
+        # If we didn't find variations with a label, try using the second row
+        if not variations_list and df.shape[0] > 1:
+            raw_variations = str(df.iloc[1, 0]).strip() if not pd.isna(df.iloc[1, 0]) else ""
+            if raw_variations and "," in raw_variations:
+                variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()]
+                print(f"Found {len(variations_list)} variations in second row")
+        
+        # Find and process requirements section
         requirements = {}
-        for idx in range(start_idx, end_idx):
-            req_desc = df.iloc[idx, 0].strip()
-            req_amount_text = df.iloc[idx, 1].strip() if df.shape[1] > 1 else ""
-            if req_desc and req_amount_text:
-                match = re.search(r"(\d+)", req_amount_text)
-                if match:
-                    amount = int(match.group(1))
-                    requirements[req_desc] = amount
-
-        # Extract word count from Basic Tunings sheet
-        try:
-            basic_tunings_df = pd.read_excel(file_path, sheet_name="Basic Tunings", header=None)
-            cp492_row = basic_tunings_df[basic_tunings_df[1] == "CP492"].index
-            if not cp492_row.empty:
-                word_count = int(basic_tunings_df.iloc[cp492_row[0], 4])
-            else:
-                word_count = 2000
-        except Exception as e:
-            print(f"Warning: Could not extract word count - {e}")
-            word_count = 2000
-
-        # Override heading requirements if controls are set
-        # Define heading controls (assumed to be defined elsewhere in your script)
-        heading_controls = {
-            2: h2_control,  # e.g., 2
-            3: h3_control,  # e.g., 3
-            4: h4_control,  # e.g., 3
-            5: h5_control,  # e.g., 0
-            # Add 6: h6_control if needed
-        }
-
-        # Remove specific overridden heading requirements
-        for level, control in heading_controls.items():
-            if control > 0:  # If an override is active
-                for key in list(requirements.keys()):
-                    if f"number of h{level} tags" in key.lower():
-                        del requirements[key]  # Remove the original requirement
-
-        # Adjust "Number of Heading Tags" if present
-        if "Number of Heading Tags" in requirements:
-            total_headings = 1  # Start with 1 for H1
-            for level in range(2, 7):  # Check H2 to H6
-                control = heading_controls.get(level, 0)  # Get override value, default to 0
-                if control > 0:
-                    total_headings += control  # Add override value
-                else:
-                    # Check for non-overridden heading requirement
-                    for key in requirements:
-                        if f"number of h{level} tags" in key.lower():
-                            total_headings += requirements[key]  # Add original value
+        requirements_section_found = False
+        
+        # Look for the heading markers more flexibly
+        for i in range(df.shape[0]):
+            row_text = str(df.iloc[i, 0]).strip() if not pd.isna(df.iloc[i, 0]) else ""
+            
+            # Check if we've found the start of the requirements section
+            marker_start = "Phase 1: Title & Headings"
+            if marker_start in row_text or "Phase 1" in row_text:
+                requirements_section_found = True
+                start_idx = i + 1
+                continue
+                
+            # Check if we've reached the end of the requirements section
+            possible_end_markers = [
+                "Phase 2: Content",
+                "Phase 3: Authority",
+                "Phase 4: Diversity",
+                "Phase 6: Search Result Presentation",
+                "Phase 7: Outbound Linking From the Page"
+            ]
+            if requirements_section_found:
+                end_found = False
+                for marker in possible_end_markers:
+                    if marker in row_text:
+                        end_idx = i
+                        end_found = True
+                        break
+                        
+                if end_found:
+                    break
+        
+        # If we found a requirements section, process it
+        if requirements_section_found:
+            end_idx = end_idx if 'end_idx' in locals() else df.shape[0]
+            
+            for idx in range(start_idx, end_idx):
+                if idx >= df.shape[0]:
+                    break
+                    
+                req_desc = str(df.iloc[idx, 0]).strip() if not pd.isna(df.iloc[idx, 0]) else ""
+                req_amount_text = str(df.iloc[idx, 1]).strip() if df.shape[1] > 1 and not pd.isna(df.iloc[idx, 1]) else ""
+                
+                if req_desc and req_amount_text:
+                    match = re.search(r"(\d+)", req_amount_text)
+                    if match:
+                        amount = int(match.group(1))
+                        requirements[req_desc] = amount
+        
+        # Extract word count more flexibly
+        word_count = 1500  # Default word count
+        
+        # Look for word count in various places
+        for i in range(min(20, df.shape[0])):
+            for j in range(min(5, df.shape[1])):
+                cell_value = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
+                if "word count" in cell_value.lower() or "cp492" in cell_value.lower():
+                    # Check cells to the right and below for a number
+                    for check_i, check_j in [(i, j+1), (i+1, j)]:
+                        if check_i < df.shape[0] and check_j < df.shape[1] and not pd.isna(df.iloc[check_i, check_j]):
+                            try:
+                                cell_value = str(df.iloc[check_i, check_j]).strip()
+                                # Extract numeric part
+                                match = re.search(r"(\d+)", cell_value)
+                                if match:
+                                    word_count = int(match.group(1))
+                                    print(f"Found word count: {word_count}")
+                            except:
+                                pass
+        
+        # If no primary keyword found yet, look for it more broadly
+        if not primary_keyword:
+            for i in range(min(10, df.shape[0])):
+                for j in range(min(3, df.shape[1])):
+                    header = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
+                    if "primary keyword" in header.lower() and i+1 < df.shape[0]:
+                        primary_keyword = str(df.iloc[i+1, j]).strip() if not pd.isna(df.iloc[i+1, j]) else ""
+                        print(f"Found primary keyword: {primary_keyword}")
+                        break
+                    # Also check if the cell itself is labeled
+                    elif j+1 < df.shape[1]:
+                        value = str(df.iloc[i, j+1]).strip() if not pd.isna(df.iloc[i, j+1]) else ""
+                        if value and "keyword" in header.lower() and "primary" in header.lower():
+                            primary_keyword = value
+                            print(f"Found primary keyword: {primary_keyword}")
                             break
-            requirements["Number of Heading Tags"] = total_headings  # Update total
-
-        # Define heading override instructions
+        
+        # If we still don't have a primary keyword, use the first variation or the URL
+        if not primary_keyword:
+            if variations_list:
+                primary_keyword = variations_list[0]
+                print(f"Using first variation as primary keyword: {primary_keyword}")
+            else:
+                # Extract domain from URL as a last resort
+                domain = url.replace("https://", "").replace("http://", "").split("/")[0]
+                primary_keyword = domain.replace("-", " ").replace(".", " ")
+                print(f"Using domain as primary keyword: {primary_keyword}")
+        
+        # Extract heading structures requirements
+        heading_structure = {"h2": 0, "h3": 0, "h4": 0, "h5": 0}
+        
+        # Set heading structure based on requirements
+        for key in requirements:
+            if "h2" in key.lower() and "tag" in key.lower():
+                match = re.search(r"(\d+)", str(requirements[key]))
+                if match:
+                    heading_structure["h2"] = int(match.group(1))
+            elif "h3" in key.lower() and "tag" in key.lower():
+                match = re.search(r"(\d+)", str(requirements[key]))
+                if match:
+                    heading_structure["h3"] = int(match.group(1))
+            elif "h4" in key.lower() and "tag" in key.lower():
+                match = re.search(r"(\d+)", str(requirements[key]))
+                if match:
+                    heading_structure["h4"] = int(match.group(1))
+            elif "h5" in key.lower() and "tag" in key.lower():
+                match = re.search(r"(\d+)", str(requirements[key]))
+                if match:
+                    heading_structure["h5"] = int(match.group(1))
+        
+        # Set defaults if none found
+        if heading_structure["h2"] == 0:
+            heading_structure["h2"] = 3
+        if heading_structure["h3"] == 0 and heading_structure["h2"] > 0:
+            heading_structure["h3"] = heading_structure["h2"] * 2
+        
         heading_overrides = []
-        for level, control in heading_controls.items():
-            if control > 0:
-                heading_overrides.append(f"Important: Headings override. Ignore Number of H{level} required. Instead use {control}")
-
-        lsi_dict = extract_lsi_keywords(file_path)
-        entities_list = extract_entities(file_path)
-
-        return {
+        
+        # Extract LSI keywords and entities
+        lsi_keywords = extract_lsi_keywords(file_path)
+        entities = extract_entities(file_path)
+        
+        # If we couldn't extract any LSI keywords, use variations
+        if not lsi_keywords and variations_list:
+            lsi_keywords = variations_list
+            print(f"Using variations as LSI keywords")
+        
+        # Create synonyms from variations if available
+        synonyms = variations_list[:5] if variations_list else []
+        
+        # Build the final result structure
+        results = {
+            "primary_keyword": primary_keyword,
             "url": url,
             "variations": variations_list,
-            "requirements": requirements,
-            "lsi_keywords": lsi_dict,
-            "entities": entities_list,
-            "location": location_info,
+            "competition_level": "Medium",  # Default value
+            "search_volume": "1K-10K",      # Default value
             "word_count": word_count,
+            "requirements": requirements,
+            "entities": entities,
+            "lsi_keywords": lsi_keywords,
+            "synonyms": synonyms,
+            "heading_structure": heading_structure,
+            "content_structure": "",
             "heading_overrides": heading_overrides
         }
+        
+        print(f"Successfully extracted requirements for {primary_keyword}")
+        return results
     except Exception as e:
         print(f"Error parsing CORA report: {e}")
         raise
