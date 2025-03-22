@@ -278,6 +278,58 @@ def extract_markdown_from_response(response_text):
         return response_text.strip()
 
 ##############################################################################
+# GENERATE HEADING STRUCTURE
+##############################################################################
+def generate_heading_structure(primary_keyword, heading_structure, lsi_keywords=None, entities=None):
+    """Generates a heading structure based on SEO requirements.
+    
+    Args:
+        primary_keyword: The main keyword for the content
+        heading_structure: Dict containing required number of headings (h2, h3, etc.)
+        lsi_keywords: List of LSI keywords to potentially use in headings
+        entities: List of entities to potentially use in headings
+        
+    Returns:
+        A string representation of the heading structure requirements
+    """
+    if lsi_keywords is None:
+        lsi_keywords = []
+    if entities is None:
+        entities = []
+    
+    headings_text = "HEADING STRUCTURE:\n"
+    
+    # Add H1 requirements
+    headings_text += f"1. H1: Include one H1 title that contains the primary keyword '{primary_keyword}'\n"
+    
+    # Add requirements for other heading levels
+    for level in range(2, 6):
+        key = f"h{level}"
+        count = heading_structure.get(key, 0)
+        if count > 0:
+            headings_text += f"{level}. H{level}: Include approximately {count} H{level} headings"
+            
+            # Add suggestions for H2 and H3 headings
+            if level <= 3 and (lsi_keywords or entities):
+                headings_text += " - consider including these topics:\n"
+                
+                # Add some LSI keywords as potential heading topics
+                sample_keywords = lsi_keywords[:min(len(lsi_keywords), 3)]
+                if sample_keywords:
+                    for kw in sample_keywords:
+                        headings_text += f"   - {kw}\n"
+                
+                # Add some entities as potential heading topics
+                sample_entities = entities[:min(len(entities), 2)]
+                if sample_entities:
+                    for entity in sample_entities:
+                        headings_text += f"   - {entity}\n"
+            else:
+                headings_text += "\n"
+    
+    return headings_text
+
+##############################################################################
 # GENERATE INITIAL MARKDOWN
 ##############################################################################
 def generate_initial_markdown(requirements, claude_api, openai_api):
@@ -474,6 +526,94 @@ def save_markdown_to_file(markdown_str, url, iteration):
     
     print(f"\nMarkdown content saved to: {filename}")
     return filename
+
+##############################################################################
+# EXTRACT HTML FROM RESPONSE
+##############################################################################
+def extract_html_from_response(response_text):
+    """Extracts HTML content from an API response."""
+    # Look for HTML content within HTML tags or code blocks
+    html_match = re.search(r'```(?:html)?(.*?)```', response_text, re.DOTALL)
+    if html_match:
+        return html_match.group(1).strip()
+    
+    # If no HTML code blocks, try to find content between <html> tags
+    html_tag_match = re.search(r'<html.*?>(.*?)</html>', response_text, re.DOTALL)
+    if html_tag_match:
+        return f"<html>{html_tag_match.group(1)}</html>"
+    
+    # If neither is found, just return the original text
+    return response_text.strip()
+
+##############################################################################
+# GENERATE INITIAL HTML
+##############################################################################
+def generate_initial_html(markdown_content, api_key):
+    """Converts markdown content to HTML using the specified AI platform."""
+    print("Converting markdown to HTML...")
+    
+    system_prompt = """You are an expert web developer specializing in converting markdown to clean, semantic HTML.
+Your task is to convert the provided markdown content into valid HTML5 that follows best practices.
+
+Instructions:
+1. Convert all markdown syntax to proper HTML5 elements
+2. Ensure all headings (h1-h5) maintain their hierarchy
+3. Apply proper HTML semantics (article, section, etc.) where appropriate
+4. Convert markdown lists to proper HTML lists (ul/ol with li elements)
+5. Convert emphasis and strong formatting to appropriate HTML tags
+6. Format the HTML with proper indentation for readability
+7. Do not add any CSS or JavaScript
+8. Return ONLY the HTML code without any explanation
+"""
+
+    user_prompt = f"""Please convert this markdown content to clean, semantic HTML5:
+
+{markdown_content}
+
+Return ONLY the HTML code.
+"""
+
+    # Make API call based on platform
+    if platform == "Claude":
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model=claude_model,
+            max_tokens=4096,
+            system=system_prompt,
+            messages=[
+                {
+                    "role": "user",
+                    "content": user_prompt
+                }
+            ]
+        )
+        html_content = extract_html_from_response(response.content[0].text)
+    
+    elif platform == "ChatGPT":
+        client = OpenAI(api_key=api_key)
+        response = client.chat.completions.create(
+            model=chatgpt_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": system_prompt
+                },
+                {
+                    "role": "user", 
+                    "content": user_prompt
+                }
+            ],
+            max_tokens=4096
+        )
+        html_content = extract_html_from_response(response.choices[0].message.content)
+    
+    # Save HTML to file
+    filename = f"{OUTPUT_DIR}/output.html"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    
+    print(f"✅ HTML saved to {filename}")
+    return html_content
 
 ##############################################################################
 # MAIN FUNCTION
