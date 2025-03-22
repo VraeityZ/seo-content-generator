@@ -1,21 +1,21 @@
-# @title SEO Content Generator
 import os
 import re
 import pandas as pd
-from google.colab import files
 import anthropic
 from openai import OpenAI
 from datetime import datetime
 from bs4 import BeautifulSoup
 import warnings
 import math
+import io
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.styles.stylesheet")
+
 # Define output directory
 OUTPUT_DIR = "output_markdown"
 
 # Placeholder for API keys - these should be set in environment variables or Streamlit secrets
-claude_api = None  # Will be provided by the user at runtime
-openai_api = None  # Will be provided by the user at runtime
+def get_api_keys(claude_api, openai_api):
+    return claude_api, openai_api
 
 # Model selection (choose between Claude and ChatGPT)
 platform = "Claude"  # @param ["Claude"]
@@ -29,22 +29,23 @@ h4_control = 0  # @param {"type":"number","placeholder":"0"}
 h5_control = 0  # @param {"type":"number","placeholder":"0"}
 
 # Initialize API clients
-if platform == "Claude":
-    client = anthropic.Anthropic(api_key=claude_api)
-    model = claude_model
-elif platform == "ChatGPT":
-    client = OpenAI(api_key=openai_api)
-    model = chatgpt_model
-else:
-    raise ValueError(f"Unsupported platform: {platform}")
+def initialize_api_clients(claude_api, openai_api):
+    if platform == "Claude":
+        client = anthropic.Anthropic(api_key=claude_api)
+        model = claude_model
+    elif platform == "ChatGPT":
+        client = OpenAI(api_key=openai_api)
+        model = chatgpt_model
+    else:
+        raise ValueError(f"Unsupported platform: {platform}")
+    return client, model
 
 ##############################################################################
 # UPLOAD FILE
 ##############################################################################
 def upload_file():
     """Prompts the user to upload an Excel file containing the CORA report."""
-    print("Please upload your Excel file containing the CORA report.")
-    uploaded = files.upload()
+    uploaded = None
     return uploaded
 
 ##############################################################################
@@ -139,7 +140,6 @@ def parse_cora_report(file_path):
         if control > 0:
             heading_overrides.append(f"Important: Headings override. Ignore Number of H{level} required. Instead use {control}")
 
-
     lsi_dict = extract_lsi_keywords(file_path)
     entities_list = extract_entities(file_path)
 
@@ -224,7 +224,7 @@ def extract_markdown_from_response(response_text):
 ##############################################################################
 # GENERATE INITIAL MARKDOWN
 ##############################################################################
-def generate_initial_markdown(requirements):
+def generate_initial_markdown(requirements, claude_api, openai_api):
     """Generates an SEO-optimized markdown page based on CORA report requirements using the new prompt structure."""
     url = requirements["url"]
     variations = requirements["variations"]
@@ -277,8 +277,8 @@ Please follow these guidelines for content structure:
 3A. Definition: Prevent the repetition of identical factual information, phrasing, or ideas across different sections unless necessary for context or emphasis.
 3B. Guidelines:
 3B1. Each section should introduce new information or a fresh perspective.
-3B2. Avoid reusing the same sentences or key points under different headings.
-3B3. If overlap occurs, merge sections or reframe the content to add distinct value.
+3B2. Use transitional phrases (e.g., "In addition," "As a result," "Next") to link ideas where needed.
+3B3. Avoid sudden jumps between unrelated topics.
 3C. Example:
 3C1. Redundant: Two sections both state, '[Topic] is beneficial.'
 3C2. Fixed: One section defines SEO, while another explains how it boosts visibility with specific strategies.
@@ -363,6 +363,7 @@ Now that the headings are laid out and confirmed. Generate content for each sect
         f.write(f"System Prompt:\n{system_prompt}\n\n\nUser Prompt:{user_prompt}")
     print("=== Prompt output saved to prompt.txt ===\n")
     # API call based on platform
+    client, model = initialize_api_clients(claude_api, openai_api)
     if platform == "Claude":
         response = client.messages.create(
             model=model,
@@ -421,44 +422,46 @@ def save_markdown_to_file(markdown_str, url, iteration):
 ##############################################################################
 # MAIN FUNCTION
 ##############################################################################
-def main():
+def main(claude_api, openai_api):
     """Main function to orchestrate the markdown generation process."""
     try:
         # Create output directory if it doesn't exist
-        if not os.path.exists(OUTPUT_DIR):
-            os.makedirs(OUTPUT_DIR)
-
-        # Upload CORA report
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        
+        # Upload file
         uploaded = upload_file()
         if not uploaded:
             print("No file uploaded. Exiting.")
             return
-        file_path = list(uploaded.keys())[0]
+        file_path = uploaded
         
         # Parse CORA report
         try:
+            print("Parsing CORA report...")
             requirements = parse_cora_report(file_path)
-            print(f"Parsed requirements: {len(requirements['requirements'])} items")
-            print(f"LSI keywords: {len(requirements['lsi_keywords'])} items")
-            print(f"Entities: {len(requirements['entities'])} items")
-            if requirements.get("location"):
-                print(f"Location detected: {requirements['location']}")
-            print(f"Word count target: {requirements['word_count']} words")
-            print(f"Heading overrides: {requirements['heading_overrides']}")
+            print(f"✅ Successfully extracted requirements for {requirements['url']}")
+            print(f"Primary Keyword: {requirements['primary_keyword']}")
+            print(f"Word Count Target: {requirements['word_count']}")
+            print(f"Entities Found: {len(requirements['entities'])}")
+            print(f"LSI Keywords Found: {len(requirements['lsi_keywords'])}")
+            print()
         except Exception as e:
-            print(f"Error parsing CORA report: {e}")
+            print(f"❌ Error parsing CORA report: {e}")
             return
 
         # Generate initial markdown
-        markdown_content = generate_initial_markdown(requirements)
+        markdown_content = generate_initial_markdown(requirements, claude_api, openai_api)
         
         # Save markdown to file
         save_markdown_to_file(markdown_content, requirements["url"], 1)
         
-        print("=== Process completed successfully! ===")
-        
+        return markdown_content
     except Exception as e:
         print(f"Error in main function: {e}")
 
 if __name__ == "__main__":
-    main()
+    # When running directly, API keys would be provided via environment variables or command line
+    import os
+    claude_api = os.environ.get("CLAUDE_API_KEY")
+    openai_api = os.environ.get("OPENAI_API_KEY")
+    main(claude_api, openai_api)
