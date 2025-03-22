@@ -24,6 +24,53 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Define the generate_heading_structure function for prompt preview
+def generate_heading_structure(primary_keyword, heading_structure, lsi_keywords=None, entities=None):
+    """
+    Generate a sample heading structure for the API prompt preview.
+    
+    Args:
+        primary_keyword (str): The main keyword for the content
+        heading_structure (dict): Dict with heading levels as keys and counts as values
+        lsi_keywords (list): Optional list of LSI keywords to include in headings
+        entities (list): Optional list of entities to include in headings
+        
+    Returns:
+        str: A formatted string showing a sample heading structure
+    """
+    if not lsi_keywords:
+        lsi_keywords = []
+    if not entities:
+        entities = []
+    
+    # Create sample heading structure
+    heading_text = f"H1: {primary_keyword.title()}\n\n"
+    
+    # Add H2 headings
+    h2_count = heading_structure.get("h2", 0)
+    for i in range(h2_count):
+        # Alternate between using LSI keywords, entities, and generic headings
+        if i < len(lsi_keywords):
+            heading = f"Understanding {lsi_keywords[i].title()}"
+        elif i - len(lsi_keywords) < len(entities):
+            heading = f"{entities[i - len(lsi_keywords)].title()} in Relation to {primary_keyword.title()}"
+        else:
+            heading = f"{primary_keyword.title()} Benefit #{i+1}"
+        
+        heading_text += f"H2: {heading}\n"
+        
+        # Add potential H3 subheadings under each H2
+        h3_per_h2 = heading_structure.get("h3", 0) // max(h2_count, 1)
+        for j in range(h3_per_h2):
+            heading_text += f"  H3: Subtopic #{j+1} About {primary_keyword.title()}\n"
+    
+    # Add optional H4 headings if specified
+    h4_count = heading_structure.get("h4", 0)
+    if h4_count:
+        heading_text += "\nAdditional H4 headings will be used as needed within the content structure.\n"
+        
+    return heading_text
+
 def validate_markdown(markdown_content, requirements, api_key, model="claude-3-7-sonnet-latest"):
     """Validates the generated markdown against SEO requirements."""
     client = anthropic.Anthropic(api_key=api_key)
@@ -223,7 +270,7 @@ if uploaded_file is not None:
                 st.session_state.step = 2
                 
                 # Force rerun to update the UI
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"Error extracting requirements: {str(e)}")
                 
@@ -249,39 +296,185 @@ if st.session_state.get("step", 1) == 2:
     # Display requirements
     st.subheader("Extracted Requirements")
     
-    # Basic info
-    st.write(f"**Primary Keyword:** {requirements.get('primary_keyword', 'Not found')}")
-    st.write(f"**Search Volume:** {requirements.get('search_volume', 'Not found')}")
-    st.write(f"**Competition Level:** {requirements.get('competition_level', 'Not found')}")
+    # Add a debug section to show all extracted information
+    with st.expander("🔍 View Complete Extracted Data", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### Core Information")
+            st.write(f"**Primary Keyword:** {requirements.get('primary_keyword', 'Not found')}")
+            st.write(f"**Target URL:** {requirements.get('url', 'Not found')}")
+            st.write(f"**Search Volume:** {requirements.get('search_volume', 'Not found')}")
+            st.write(f"**Competition Level:** {requirements.get('competition_level', 'Not found')}")
+            st.write(f"**Word Count Target:** {requirements.get('word_count', 'Not found')} words")
+        
+        with col2:
+            st.markdown("### Debug Information")
+            debug_info = requirements.get('debug_info', {})
+            if debug_info:
+                st.write(f"**Sheets Found:** {', '.join(debug_info.get('sheets_found', ['None']))}")
+                st.write(f"**LSI Start Row:** {debug_info.get('lsi_start_row', 'Not found')}")
+                st.write(f"**Entities Start Row:** {debug_info.get('entities_start_row', 'Not found')}")
+                st.write(f"**Headings Section:** {debug_info.get('headings_section', 'Not found')}")
+        
+        # Show all synonym variations
+        st.markdown("### Keyword Variations")
+        synonyms = requirements.get('synonyms', [])
+        if synonyms:
+            st.write(f"Found {len(synonyms)} synonyms/variations:")
+            for idx, synonym in enumerate(synonyms, 1):
+                st.write(f"{idx}. {synonym}")
+        else:
+            st.write("No synonyms found")
+        
+        # Show all LSI keywords with frequencies
+        st.markdown("### LSI Keywords")
+        lsi_keywords = requirements.get('lsi_keywords', {})
+        if lsi_keywords:
+            st.write(f"Found {len(lsi_keywords)} LSI keywords:")
+            # Create a DataFrame for better display
+            lsi_df = pd.DataFrame({
+                'Keyword': list(lsi_keywords.keys()), 
+                'Frequency': list(lsi_keywords.values())
+            })
+            st.dataframe(lsi_df)
+        else:
+            st.write("No LSI keywords found")
+        
+        # Show all entities
+        st.markdown("### Entities")
+        entities = requirements.get('entities', [])
+        if entities:
+            st.write(f"Found {len(entities)} entities:")
+            # Create columns for better display
+            num_cols = 3
+            entity_rows = [entities[i:i + num_cols] for i in range(0, len(entities), num_cols)]
+            for row in entity_rows:
+                cols = st.columns(num_cols)
+                for i, entity in enumerate(row):
+                    cols[i].write(f"• {entity}")
+        else:
+            st.write("No entities found")
+        
+        # Detailed heading structure
+        st.markdown("### Heading Structure")
+        heading_structure = requirements.get('heading_structure', {})
+        if heading_structure:
+            # Create a visual representation
+            h_df = pd.DataFrame({
+                'Heading Level': [f"H{i}" for i in range(1, 6)],
+                'Count': [1] + [heading_structure.get(f"h{i}", 0) for i in range(2, 6)]
+            })
+            st.dataframe(h_df)
+            
+            # Total heading count
+            total_headings = 1 + sum(heading_structure.values())
+            st.write(f"**Total Headings:** {total_headings}")
+        
+        # Roadmap requirements
+        st.markdown("### Specific Requirements (from Roadmap)")
+        roadmap_reqs = requirements.get('requirements', {})
+        if roadmap_reqs:
+            # Sort requirements by key for better readability
+            sorted_reqs = dict(sorted(roadmap_reqs.items()))
+            req_df = pd.DataFrame({
+                'Requirement': list(sorted_reqs.keys()),
+                'Value': list(sorted_reqs.values())
+            })
+            st.dataframe(req_df)
+        else:
+            st.write("No specific requirements found")
     
-    # Keywords
-    with st.expander("Keywords"):
-        st.write(f"**Synonyms:** {', '.join(requirements.get('synonyms', []))}")
+    # Show actual prompt that will be sent to the API
+    with st.expander("🔍 View API Prompt", expanded=True):
+        st.markdown("### Prompt That Will Be Sent to Claude/ChatGPT")
+        
+        # Construct a sample of the prompt
+        primary_keyword = requirements.get('primary_keyword', '')
+        variations = requirements.get('variations', [])
+        lsi_dict = requirements.get('lsi_keywords', {})
+        entities = requirements.get('entities', [])
+        word_count = requirements.get('word_count', 1500)
+        heading_structure = requirements.get('heading_structure', {"h2": 3, "h3": 6})
+        
+        # Format requirements for display
+        variations_text = ", ".join(variations[:5]) + (f"... and {len(variations) - 5} more" if len(variations) > 5 else "")
+        
+        lsi_formatted = "\n".join([f"'{kw}' => at least {freq} occurrences" for kw, freq in list(lsi_dict.items())[:5]])
+        if len(lsi_dict) > 5:
+            lsi_formatted += f"\n... and {len(lsi_dict) - 5} more keywords"
+        
+        entities_text = ", ".join(entities[:5]) + (f"... and {len(entities) - 5} more" if len(entities) > 5 else "")
+        
+        # Generate heading structure text
+        headings_text = generate_heading_structure(
+            primary_keyword, 
+            heading_structure,
+            list(lsi_dict.keys())[:3] if lsi_dict else [],
+            entities[:3] if entities else []
+        )
+        
+        # Construct the prompt preview
+        prompt_preview = f"""
+        ## SEO Content Writing Task
+
+        **PRIMARY KEYWORD:** {primary_keyword}
+        **VARIATIONS:** {variations_text}
+        **WORD COUNT:** {word_count} words
+
+        ### CONTENT REQUIREMENTS:
+        
+        {headings_text}
+        
+        ### LSI KEYWORDS:
+        {lsi_formatted}
+        
+        ### ENTITIES TO INCLUDE:
+        {entities_text}
+        
+        ### ADDITIONAL INSTRUCTIONS:
+        - Write in a clear, authoritative style
+        - Include the primary keyword in the first 100 words
+        - Use a variety of heading levels for better readability
+        - Ensure content is factually accurate and helpful to the reader
+        """
+        
+        st.code(prompt_preview, language="markdown")
+    
+    # Basic info (original compact view)
+    with st.expander("Basic Requirements Summary", expanded=False):
+        st.write(f"**Primary Keyword:** {requirements.get('primary_keyword', 'Not found')}")
+        st.write(f"**Search Volume:** {requirements.get('search_volume', 'Not found')}")
+        st.write(f"**Competition Level:** {requirements.get('competition_level', 'Not found')}")
+        
+        # Keywords
+        st.write(f"**Synonyms:** {', '.join(requirements.get('synonyms', []))[:100]}{'...' if len(', '.join(requirements.get('synonyms', []))) > 100 else ''}")
         
         # LSI Keywords
         st.write("**LSI Keywords:**")
-        lsi_keywords = requirements.get('lsi_keywords', [])
+        lsi_keywords = requirements.get('lsi_keywords', {})
         if lsi_keywords:
-            for keyword in lsi_keywords[:10]:  # Show first 10
-                st.write(f"- {keyword}")
-            if len(lsi_keywords) > 10:
-                st.write(f"... and {len(lsi_keywords) - 10} more")
-    
-    # Entities
-    with st.expander("Entities"):
+            lsi_items = list(lsi_keywords.items())
+            for keyword, freq in lsi_items[:5]:  # Show first 5
+                st.write(f"- {keyword} ({freq})")
+            if len(lsi_items) > 5:
+                st.write(f"... and {len(lsi_items) - 5} more")
+        
+        # Entities
+        st.write("**Entities:**")
         entities = requirements.get('entities', [])
         if entities:
-            for entity in entities[:10]:  # Show first 10
+            for entity in entities[:5]:  # Show first 5
                 st.write(f"- {entity}")
-            if len(entities) > 10:
-                st.write(f"... and {len(entities) - 10} more")
-    
-    # Heading structure
-    with st.expander("Heading Structure"):
+            if len(entities) > 5:
+                st.write(f"... and {len(entities) - 5} more")
+        
+        # Heading structure
+        st.write("**Heading Structure:**")
         heading_structure = requirements.get('heading_structure', {})
         for level in range(2, 6):
             key = f"h{level}"
-            st.write(f"**{key.upper()} Headings:** {heading_structure.get(key, 0)}")
+            st.write(f"- **{key.upper()} Headings:** {heading_structure.get(key, 0)}")
     
     # Generate content button
     if st.button("Generate Content"):
