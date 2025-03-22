@@ -1,21 +1,80 @@
 import streamlit as st
 import pandas as pd
+import time
 import os
 import anthropic
+from openai import OpenAI
 import json
 import re
+import datetime
+from pathlib import Path
+import openpyxl
+from io import BytesIO
 
+# Import only the functions that exist in main.py
 from main import (
     parse_cora_report,
     generate_heading_structure,
-    generate_initial_markdown,
-    extract_lsi_keywords,
-    extract_entities,
-    extract_html_from_response,
-    generate_initial_html,
-    initialize_api_clients,
-    get_api_keys
+    generate_content
 )
+
+# Define a utility function for the app to analyze content
+def analyze_content(markdown_content, requirements):
+    """Analyze the generated content against the SEO requirements."""
+    # Initialize the analysis results
+    analysis = {
+        "primary_keyword": requirements.get("primary_keyword", ""),
+        "primary_keyword_count": 0,
+        "word_count": 0,
+        "heading_structure": {"H1": 0, "H2": 0, "H3": 0, "H4": 0, "H5": 0, "H6": 0},
+        "lsi_keywords": {},
+        "entities": {}
+    }
+    
+    # Count words
+    words = markdown_content.split()
+    analysis["word_count"] = len(words)
+    
+    # Count primary keyword
+    primary_keyword = requirements.get("primary_keyword", "").lower()
+    if primary_keyword:
+        analysis["primary_keyword_count"] = markdown_content.lower().count(primary_keyword)
+    
+    # Count headings
+    heading_pattern = r"^(#{1,6})\s+(.+)$"
+    for line in markdown_content.split("\n"):
+        match = re.match(heading_pattern, line)
+        if match:
+            heading_level = f"H{len(match.group(1))}"
+            analysis["heading_structure"][heading_level] += 1
+    
+    # Count LSI keywords
+    lsi_keywords = requirements.get("lsi_keywords", {})
+    if isinstance(lsi_keywords, list):
+        # Convert list to dictionary if needed
+        lsi_keywords_dict = {kw: 1 for kw in lsi_keywords}
+        lsi_keywords = lsi_keywords_dict
+
+    for keyword, target_count in lsi_keywords.items():
+        count = markdown_content.lower().count(keyword.lower())
+        status = "✅" if count >= target_count else "❌"
+        analysis["lsi_keywords"][keyword] = {
+            "count": count,
+            "target": target_count,
+            "status": status
+        }
+    
+    # Check entities
+    entities = requirements.get("entities", [])
+    for entity in entities:
+        found = entity.lower() in markdown_content.lower()
+        status = "✅" if found else "❌"
+        analysis["entities"][entity] = {
+            "found": found,
+            "status": status
+        }
+    
+    return analysis
 
 st.set_page_config(
     page_title="SEO Content Generator",
@@ -220,7 +279,81 @@ with st.sidebar:
 # File upload section
 uploaded_file = st.file_uploader("Upload CORA report", type=["xlsx", "xls"])
 
+def process_upload():
+    """Process the uploaded CORA report and extract requirements."""
+    if 'file' not in st.session_state:
+        st.error("Please upload a CORA report first.")
+        return
+    
+    try:
+        file = st.session_state['file']
+        
+        with st.spinner("Processing CORA report..."):
+            # Parse the CORA report
+            requirements = parse_cora_report(file)
+            
+            # Ensure consistent naming (synonyms vs variations)
+            if 'variations' in requirements and 'synonyms' not in requirements:
+                requirements['synonyms'] = requirements['variations']
+            
+            # Ensure lsi_keywords is a dictionary
+            if isinstance(requirements.get('lsi_keywords', {}), list):
+                lsi_dict = {kw: 1 for kw in requirements.get('lsi_keywords', [])}
+                requirements['lsi_keywords'] = lsi_dict
+                
+            # Remove URL-related information if present
+            requirements.pop('url', None)
+            
+            # Set default word count if missing
+            if 'word_count' not in requirements:
+                requirements['word_count'] = 1500
+            
+            # Initialize heading structure if it doesn't exist
+            if 'heading_structure' not in requirements:
+                requirements['heading_structure'] = {'h2': 3, 'h3': 5, 'h4': 2, 'h5': 0}
+            
+            # Apply heading controls if they're set in the UI
+            # Get values from the main UI number_input widgets
+            h2_control = st.session_state.get('h2_control', 0)
+            h3_control = st.session_state.get('h3_control', 0)
+            h4_control = st.session_state.get('h4_control', 0)
+            h5_control = st.session_state.get('h5_control', 0)
+            
+            # Override heading structure with user inputs if provided
+            if h2_control > 0:
+                requirements["heading_structure"]["h2"] = h2_control
+            if h3_control > 0:
+                requirements["heading_structure"]["h3"] = h3_control
+            if h4_control > 0:
+                requirements["heading_structure"]["h4"] = h4_control
+            if h5_control > 0:
+                requirements["heading_structure"]["h5"] = h5_control
+            
+            # Save to session state
+            st.session_state['requirements'] = requirements
+            st.session_state['step'] = 2
+        
+        # Display some key information about the extracted requirements
+        st.success("CORA report processed successfully!")
+        st.info(f"Primary Keyword: {requirements['primary_keyword']}")
+        st.info(f"Found {len(requirements.get('synonyms', []))} keyword variations")
+        st.info(f"Found {len(requirements.get('lsi_keywords', {}))} LSI keywords")
+        st.info(f"Word Count Target: {requirements.get('word_count', 1500)} words")
+        st.info(f"Heading Structure: H2={requirements['heading_structure']['h2']}, " +
+               f"H3={requirements['heading_structure']['h3']}, " +
+               f"H4={requirements['heading_structure']['h4']}, " +
+               f"H5={requirements['heading_structure']['h5']}")
+        
+    except Exception as e:
+        st.error(f"Error processing CORA report: {str(e)}")
+        st.write("Debug information:")
+        st.write(f"Exception type: {type(e).__name__}")
+        st.write(f"Exception message: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
 if uploaded_file is not None:
+    st.session_state['file'] = uploaded_file
     st.success(f"Successfully uploaded: {uploaded_file.name}")
     
     # Display heading controls
@@ -230,65 +363,17 @@ if uploaded_file is not None:
         col1, col2 = st.columns(2)
         
         with col1:
-            h2_control = st.number_input("Number of H2 headings", min_value=0, max_value=10, value=0, step=1)
-            h3_control = st.number_input("Number of H3 headings", min_value=0, max_value=20, value=0, step=1)
+            h2_control = st.number_input("Number of H2 headings", min_value=0, max_value=10, value=0, step=1, key='h2_control')
+            h3_control = st.number_input("Number of H3 headings", min_value=0, max_value=20, value=0, step=1, key='h3_control')
         
         with col2:
-            h4_control = st.number_input("Number of H4 headings", min_value=0, max_value=20, value=0, step=1)
-            h5_control = st.number_input("Number of H5 headings", min_value=0, max_value=20, value=0, step=1)
+            h4_control = st.number_input("Number of H4 headings", min_value=0, max_value=20, value=0, step=1, key='h4_control')
+            h5_control = st.number_input("Number of H5 headings", min_value=0, max_value=20, value=0, step=1, key='h5_control')
     
     # Button to extract requirements
     if st.button("Extract Requirements"):
-        with st.spinner("Extracting requirements..."):
-            try:
-                # Add debug info
-                st.info("Analyzing CORA report... This may take a moment.")
-                
-                # Pass the uploaded file directly to the parse_cora_report function
-                requirements = parse_cora_report(uploaded_file)
-                
-                # Remove URL-related information
-                requirements.pop('url', None)
-                
-                # Display some key information that was extracted
-                st.success(f"✅ Successfully extracted requirements!")
-                st.info(f"Primary Keyword: {requirements['primary_keyword']}")
-                st.info(f"Found {len(requirements['variations'])} keyword variations")
-                st.info(f"Found {len(requirements['lsi_keywords'])} LSI keywords")
-                st.info(f"Word Count Target: {requirements['word_count']} words")
-                
-                # Override heading structure with user inputs if provided
-                if h2_control > 0:
-                    requirements["heading_structure"]["h2"] = h2_control
-                if h3_control > 0:
-                    requirements["heading_structure"]["h3"] = h3_control
-                if h4_control > 0:
-                    requirements["heading_structure"]["h4"] = h4_control
-                if h5_control > 0:
-                    requirements["heading_structure"]["h5"] = h5_control
-                
-                # Store results in session state
-                st.session_state.requirements = requirements
-                st.session_state.step = 2
-                
-                # Force rerun to update the UI
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error extracting requirements: {str(e)}")
-                
-                # Add more detailed error information
-                import traceback
-                st.error("Detailed error information:")
-                st.code(traceback.format_exc())
-                
-                # Provide troubleshooting suggestions
-                st.warning("Troubleshooting suggestions:")
-                st.markdown("""
-                - Verify the file is a valid CORA report Excel file
-                - Make sure the file isn't password protected
-                - Check that the file has the expected structure with Phase 1, Phase 2, etc.
-                - Try downloading a fresh copy of the CORA report
-                """)
+        process_upload()
+
 else:
     st.info("Please upload a CORA report to get started.")
 
@@ -331,6 +416,11 @@ if st.session_state.get("step", 1) == 2:
         # Show all LSI keywords with frequencies
         st.markdown("### LSI Keywords")
         lsi_keywords = requirements.get('lsi_keywords', {})
+        
+        # Convert to dictionary if it's a list
+        if isinstance(lsi_keywords, list):
+            lsi_keywords = {kw: 1 for kw in lsi_keywords}
+            
         if lsi_keywords:
             st.write(f"Found {len(lsi_keywords)} LSI keywords:")
             # Create a DataFrame for better display
@@ -394,6 +484,11 @@ if st.session_state.get("step", 1) == 2:
         primary_keyword = requirements.get('primary_keyword', '')
         variations = requirements.get('synonyms', [])
         lsi_dict = requirements.get('lsi_keywords', {})
+        
+        # Ensure lsi_dict is a dictionary
+        if isinstance(lsi_dict, list):
+            lsi_dict = {kw: 1 for kw in lsi_dict}
+            
         entities = requirements.get('entities', [])
         word_count = requirements.get('word_count', 1500)
         heading_structure = requirements.get('heading_structure', {"h2": 3, "h3": 6})
@@ -460,6 +555,8 @@ if st.session_state.get("step", 1) == 2:
                 st.write(f"- {keyword} ({freq})")
             if len(lsi_items) > 5:
                 st.write(f"... and {len(lsi_items) - 5} more")
+        else:
+            st.write("No LSI keywords found")
         
         # Entities
         st.write("**Entities:**")
@@ -479,100 +576,199 @@ if st.session_state.get("step", 1) == 2:
     
     # Generate content button
     if st.button("Generate Content"):
-        if not claude_api:
+        if not st.session_state.get('claude_api', ''):
             st.error("Please enter your Claude API key in the sidebar.")
         else:
-            with st.spinner("Generating content... This may take a few minutes."):
-                try:
-                    # Generate markdown content
-                    markdown_content = generate_initial_markdown(
-                        requirements, 
-                        claude_api=claude_api, 
-                        openai_api=openai_api
-                    )
-                    
-                    # Display the markdown content
-                    st.subheader("Generated Content")
-                    st.markdown(markdown_content)
-                    
-                    # Validate the content button
-                    if st.button("Validate Content"):
-                        with st.spinner("Validating content..."):
-                            validation_result = validate_markdown(
-                                markdown_content, 
-                                requirements, 
-                                claude_api
-                            )
-                            
-                            # Display validation results
-                            st.subheader("Validation Results")
-                            
-                            # Overall result
-                            if validation_result.get("passes_validation", False):
-                                st.success("✅ Content passes all SEO requirements!")
-                            else:
-                                st.error("❌ Content needs improvement to meet SEO requirements.")
-                            
-                            # Primary keyword assessment
-                            st.write(f"**Primary Keyword Frequency:** {validation_result.get('primary_keyword_frequency', 'N/A')}")
-                            assessment = validation_result.get('primary_keyword_assessment', 'N/A')
-                            if assessment == "good":
-                                st.success("✅ Primary keyword frequency is good.")
-                            elif assessment == "too_low":
-                                st.warning("⚠️ Primary keyword frequency is too low.")
-                            elif assessment == "too_high":
-                                st.warning("⚠️ Primary keyword frequency is too high.")
-                            
-                            # Missing elements
-                            if validation_result.get('missing_synonyms', []):
-                                st.warning(f"⚠️ Missing synonyms: {', '.join(validation_result['missing_synonyms'])}")
-                            else:
-                                st.success("✅ All required synonyms are included.")
-                                
-                            if validation_result.get('missing_entities', []):
-                                st.warning(f"⚠️ Missing entities: {', '.join(validation_result['missing_entities'])}")
-                            else:
-                                st.success("✅ All required entities are included.")
-                                
-                            if validation_result.get('missing_secondary_keywords', []):
-                                st.warning(f"⚠️ Missing secondary keywords: {', '.join(validation_result['missing_secondary_keywords'][:5])}")
-                                if len(validation_result.get('missing_secondary_keywords', [])) > 5:
-                                    st.write(f"... and {len(validation_result['missing_secondary_keywords']) - 5} more")
-                            else:
-                                st.success("✅ All secondary keywords are included.")
-                            
-                            # Heading structure assessment
-                            st.subheader("Heading Structure Assessment")
-                            heading_assessment = validation_result.get('heading_structure_assessment', {})
-                            
-                            for level in range(2, 6):
-                                key = f"h{level}"
-                                required = heading_assessment.get(f"{key}_required", 0)
-                                found = heading_assessment.get(f"{key}_found", 0)
-                                assessment = heading_assessment.get(f"{key}_assessment", "N/A")
-                                
-                                if assessment == "good":
-                                    st.success(f"✅ {key.upper()}: {found}/{required} headings (Good)")
-                                elif assessment == "too_few":
-                                    st.warning(f"⚠️ {key.upper()}: {found}/{required} headings (Too few)")
-                                elif assessment == "too_many":
-                                    st.warning(f"⚠️ {key.upper()}: {found}/{required} headings (Too many)")
-                            
-                            # Suggestions for improvement
-                            if validation_result.get('suggestions_for_improvement', []):
-                                st.subheader("Suggestions for Improvement")
-                                for suggestion in validation_result['suggestions_for_improvement']:
-                                    st.write(f"- {suggestion}")
-                    
-                    # Download button for markdown
-                    st.download_button(
-                        label="Download Markdown",
-                        data=markdown_content,
-                        file_name=f"{requirements.get('primary_keyword', 'content').replace(' ', '_')}.md",
-                        mime="text/markdown"
-                    )
-                except Exception as e:
-                    st.error(f"Error generating content: {str(e)}")
+            # Switch to the content generation flow
+            st.session_state['step'] = 3
+            st.experimental_rerun()
+    
+    # Validate the content button
+    if st.button("Validate Content"):
+        with st.spinner("Validating content..."):
+            validation_result = validate_markdown(
+                st.session_state.get('generated_markdown', ''), 
+                requirements, 
+                st.session_state.get('claude_api', '')
+            )
+            
+            # Display validation results
+            st.subheader("Validation Results")
+            
+            # Overall result
+            if validation_result.get("passes_validation", False):
+                st.success("✅ Content passes all SEO requirements!")
+            else:
+                st.error("❌ Content needs improvement to meet SEO requirements.")
+            
+            # Primary keyword assessment
+            st.write(f"**Primary Keyword Frequency:** {validation_result.get('primary_keyword_frequency', 'N/A')}")
+            assessment = validation_result.get('primary_keyword_assessment', 'N/A')
+            if assessment == "good":
+                st.success("✅ Primary keyword frequency is good.")
+            elif assessment == "too_low":
+                st.warning("⚠️ Primary keyword frequency is too low.")
+            elif assessment == "too_high":
+                st.warning("⚠️ Primary keyword frequency is too high.")
+            
+            # Missing elements
+            if validation_result.get('missing_synonyms', []):
+                st.warning(f"⚠️ Missing synonyms: {', '.join(validation_result['missing_synonyms'])}")
+            else:
+                st.success("✅ All required synonyms are included.")
+                
+            if validation_result.get('missing_entities', []):
+                st.warning(f"⚠️ Missing entities: {', '.join(validation_result['missing_entities'])}")
+            else:
+                st.success("✅ All required entities are included.")
+                
+            if validation_result.get('missing_secondary_keywords', []):
+                st.warning(f"⚠️ Missing secondary keywords: {', '.join(validation_result['missing_secondary_keywords'][:5])}")
+                if len(validation_result.get('missing_secondary_keywords', [])) > 5:
+                    st.write(f"... and {len(validation_result['missing_secondary_keywords']) - 5} more")
+            else:
+                st.success("✅ All secondary keywords are included.")
+            
+            # Heading structure assessment
+            st.subheader("Heading Structure Assessment")
+            heading_assessment = validation_result.get('heading_structure_assessment', {})
+            
+            for level in range(2, 6):
+                key = f"h{level}"
+                required = heading_assessment.get(f"{key}_required", 0)
+                found = heading_assessment.get(f"{key}_found", 0)
+                assessment = heading_assessment.get(f"{key}_assessment", "N/A")
+                
+                if assessment == "good":
+                    st.success(f"✅ {key.upper()}: {found}/{required} headings (Good)")
+                elif assessment == "too_few":
+                    st.warning(f"⚠️ {key.upper()}: {found}/{required} headings (Too few)")
+                elif assessment == "too_many":
+                    st.warning(f"⚠️ {key.upper()}: {found}/{required} headings (Too many)")
+            
+            # Suggestions for improvement
+            if validation_result.get('suggestions_for_improvement', []):
+                st.subheader("Suggestions for Improvement")
+                for suggestion in validation_result['suggestions_for_improvement']:
+                    st.write(f"- {suggestion}")
+    
+    # Download button for markdown
+    if st.session_state.get('generated_markdown', ''):
+        st.download_button(
+            label="Download Markdown",
+            data=st.session_state['generated_markdown'],
+            file_name=f"{requirements.get('primary_keyword', 'content').replace(' ', '_')}.md",
+            mime="text/markdown"
+        )
+
+def generate_content_flow():
+    """Generate and display content."""
+    if 'generated_markdown' not in st.session_state:
+        # Get requirements
+        requirements = st.session_state.requirements
+        
+        # Get settings
+        settings = {
+            'model': st.session_state.get('model', 'claude'),
+            'anthropic_api_key': st.session_state.get('claude_api', ''),
+            'openai_api_key': st.session_state.get('openai_api', ''),
+        }
+        
+        with st.spinner("Generating content..."):
+            # Generate content
+            try:
+                markdown_content, html_content, save_path = generate_content(
+                    requirements, 
+                    settings=settings
+                )
+                
+                # Save to session state
+                st.session_state['generated_markdown'] = markdown_content
+                st.session_state['generated_html'] = html_content
+                st.session_state['save_path'] = save_path
+                st.session_state['step'] = 3
+            except Exception as e:
+                st.error(f"Error generating content: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+                return
+    
+    st.success("Content generated successfully!")
+    
+    # Display the generated content
+    st.subheader("Generated Content")
+    
+    # Create tabs for different views
+    tab1, tab2, tab3 = st.tabs(["Preview", "Markdown", "Analysis"])
+    
+    with tab1:
+        # Display HTML preview
+        st.components.v1.html(st.session_state['generated_html'], height=800, scrolling=True)
+    
+    with tab2:
+        # Display markdown content
+        st.markdown("### Raw Markdown")
+        st.text_area("Markdown Content", st.session_state['generated_markdown'], height=400)
+        
+        # Download button
+        st.download_button(
+            label="Download Markdown",
+            data=st.session_state['generated_markdown'],
+            file_name=f"seo_content_{st.session_state.requirements['primary_keyword'].replace(' ', '_').lower()}.md",
+            mime="text/markdown"
+        )
+        
+        if st.session_state.get('save_path'):
+            st.write(f"Content also saved to: {st.session_state['save_path']}")
+    
+    with tab3:
+        with st.spinner("Analyzing content..."):
+            # Analyze the content
+            analysis = analyze_content(st.session_state['generated_markdown'], st.session_state.requirements)
+            
+            # Display analysis results
+            st.markdown("### Content Analysis")
+            
+            # Show primary keyword usage
+            st.write(f"**Primary Keyword:** {analysis['primary_keyword']}")
+            st.write(f"**Primary Keyword Count:** {analysis['primary_keyword_count']}")
+            st.progress(min(1.0, analysis['primary_keyword_count'] / 5))
+            
+            # Show word count
+            st.write(f"**Word Count:** {analysis['word_count']}")
+            target_word_count = st.session_state.requirements.get('word_count', 1500)
+            st.progress(min(1.0, analysis['word_count'] / target_word_count))
+            
+            # Show heading structure
+            st.write("**Heading Structure:**")
+            for level, count in analysis['heading_structure'].items():
+                target_count = st.session_state.requirements.get('heading_structure', {}).get(level.lower(), 0)
+                if level.lower() == 'h1':
+                    target_count = 1
+                st.write(f"- {level}: {count} (Target: {target_count})")
+                if target_count > 0:
+                    st.progress(min(1.0, count / target_count))
+            
+            # Show LSI keywords usage
+            st.markdown("### LSI Keywords Usage")
+            if analysis['lsi_keywords']:
+                lsi_df = pd.DataFrame(analysis['lsi_keywords']).T.reset_index()
+                lsi_df.columns = ['Keyword', 'Count', 'Target', 'Status']
+                st.dataframe(lsi_df)
+            else:
+                st.write("No LSI keywords analyzed.")
+            
+            # Show entities
+            st.markdown("### Entities Usage")
+            if analysis['entities']:
+                entity_df = pd.DataFrame(analysis['entities']).T.reset_index()
+                entity_df.columns = ['Entity', 'Found', 'Status']
+                st.dataframe(entity_df)
+            else:
+                st.write("No entities analyzed.")
+
+if st.session_state.get("step", 1) == 3:
+    generate_content_flow()
 
 # Footer
 st.markdown("---")

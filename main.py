@@ -572,6 +572,51 @@ Return ONLY the HTML code.
     return html_content
 
 ##############################################################################
+# GENERATE CONTENT
+##############################################################################
+def generate_content(requirements, claude_api=None, openai_api=None, settings=None):
+    """
+    Generate content based on the requirements. This function combines markdown generation,
+    HTML conversion, and file saving into a single function for the Streamlit app.
+    
+    Args:
+        requirements: Dictionary of SEO requirements
+        claude_api: Optional Claude API key
+        openai_api: Optional OpenAI API key
+        settings: Optional dictionary with model and API settings
+        
+    Returns:
+        Tuple of (markdown_content, html_content, save_path)
+    """
+    try:
+        # Handle settings dict if provided (from Streamlit app)
+        if settings:
+            claude_api = settings.get('anthropic_api_key') or claude_api
+            openai_api = settings.get('openai_api_key') or openai_api
+            model = settings.get('model') or 'claude'
+        
+        # Generate markdown content
+        markdown_content = generate_initial_markdown(requirements, claude_api, openai_api)
+        
+        # Convert to HTML
+        html_content = ""
+        try:
+            html_content = generate_initial_html(markdown_content, claude_api)
+        except Exception as e:
+            print(f"Warning: Could not generate HTML: {e}")
+            # Fallback to simple HTML conversion
+            html_content = f"<h1>{requirements.get('primary_keyword', 'Content')}</h1>\n"
+            html_content += markdown_content.replace("\n", "<br>")
+        
+        # Save markdown to file
+        save_path = save_markdown_to_file(markdown_content, requirements.get("primary_keyword", "content"), 1)
+        
+        return markdown_content, html_content, save_path
+    except Exception as e:
+        print(f"Error in generate_content: {e}")
+        raise e
+
+##############################################################################
 # MAIN FUNCTION
 ##############################################################################
 def main(claude_api, openai_api):
