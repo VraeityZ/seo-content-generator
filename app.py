@@ -79,7 +79,7 @@ def validate_markdown(markdown_content, requirements, api_key, model="claude-3-7
     primary_keyword = requirements.get("primary_keyword", "")
     synonyms = requirements.get("synonyms", [])
     entities = requirements.get("entities", [])
-    secondary_keywords = requirements.get("lsi_keywords", [])
+    secondary_keywords = requirements.get("lsi_keywords", {})
     
     keyword_info = ""
     if primary_keyword:
@@ -89,7 +89,7 @@ def validate_markdown(markdown_content, requirements, api_key, model="claude-3-7
     if entities:
         keyword_info += f"- Entities that should be mentioned: {', '.join([f'`{e}`' for e in entities])}\n"
     if secondary_keywords:
-        keyword_info += f"- Secondary keywords/phrases: {', '.join([f'`{k}`' for k in secondary_keywords])}\n"
+        keyword_info += f"- Secondary keywords/phrases: {', '.join([f'`{k}`' for k in secondary_keywords.keys()])}\n"
     
     # Heading structure requirements
     heading_structure = requirements.get("heading_structure", {})
@@ -247,10 +247,12 @@ if uploaded_file is not None:
                 # Pass the uploaded file directly to the parse_cora_report function
                 requirements = parse_cora_report(uploaded_file)
                 
+                # Remove URL-related information
+                requirements.pop('url', None)
+                
                 # Display some key information that was extracted
                 st.success(f"✅ Successfully extracted requirements!")
                 st.info(f"Primary Keyword: {requirements['primary_keyword']}")
-                st.info(f"Target URL: {requirements['url']}")
                 st.info(f"Found {len(requirements['variations'])} keyword variations")
                 st.info(f"Found {len(requirements['lsi_keywords'])} LSI keywords")
                 st.info(f"Word Count Target: {requirements['word_count']} words")
@@ -303,7 +305,6 @@ if st.session_state.get("step", 1) == 2:
         with col1:
             st.markdown("### Core Information")
             st.write(f"**Primary Keyword:** {requirements.get('primary_keyword', 'Not found')}")
-            st.write(f"**Target URL:** {requirements.get('url', 'Not found')}")
             st.write(f"**Search Volume:** {requirements.get('search_volume', 'Not found')}")
             st.write(f"**Competition Level:** {requirements.get('competition_level', 'Not found')}")
             st.write(f"**Word Count Target:** {requirements.get('word_count', 'Not found')} words")
@@ -391,7 +392,7 @@ if st.session_state.get("step", 1) == 2:
         
         # Construct a sample of the prompt
         primary_keyword = requirements.get('primary_keyword', '')
-        variations = requirements.get('variations', [])
+        variations = requirements.get('synonyms', [])
         lsi_dict = requirements.get('lsi_keywords', {})
         entities = requirements.get('entities', [])
         word_count = requirements.get('word_count', 1500)

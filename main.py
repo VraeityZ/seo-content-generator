@@ -53,466 +53,184 @@ def upload_file():
 def parse_cora_report(file_path):
     """Parses a CORA Excel report and extracts the SEO requirements."""
     try:
-        # Define default heading controls
-        h2_control = 0  # Default to no override
-        h3_control = 0
-        h4_control = 0
-        h5_control = 0
+        # Load the Excel workbook
+        wb = openpyxl.load_workbook(file_path, data_only=True)
         
-        print("Starting to parse CORA report...")
-        
-        # Set default values
+        # Initialize default values
         primary_keyword = ""
-        url = "https://example.com"
-        variations_list = []
-        lsi_keywords_dict = {}
-        entities_list = []
-        heading_structure = {"h2": 3, "h3": 6, "h4": 0, "h5": 0}
         search_volume = "Unknown"
         competition_level = "Medium"
-        synonyms_list = []
-        word_count = 1500
-        
-        # Read the Basic Tunings sheet first (if it exists)
-        try:
-            if isinstance(file_path, str):
-                basic_tunings_df = pd.read_excel(file_path, sheet_name="Basic Tunings", header=None)
-            else:
-                # If it's a file object (from Streamlit), convert to BytesIO
-                basic_tunings_df = pd.read_excel(file_path, sheet_name="Basic Tunings", header=None)
-            
-            print(f"Found Basic Tunings sheet with shape: {basic_tunings_df.shape}")
-            
-            # Extract Primary Keyword from B1
-            if basic_tunings_df.shape[0] > 0 and basic_tunings_df.shape[1] > 1:
-                if not pd.isna(basic_tunings_df.iloc[0, 1]):
-                    primary_keyword = str(basic_tunings_df.iloc[0, 1]).strip()
-                    print(f"Found primary keyword in Basic Tunings B1: {primary_keyword}")
-            
-            # Extract Synonyms from B2 (separated by '|')
-            if basic_tunings_df.shape[0] > 1 and basic_tunings_df.shape[1] > 1:
-                if not pd.isna(basic_tunings_df.iloc[1, 1]):
-                    synonyms_text = str(basic_tunings_df.iloc[1, 1]).strip()
-                    if '|' in synonyms_text:
-                        synonyms_list = [s.strip() for s in synonyms_text.split('|') if s.strip()]
-                    else:
-                        synonyms_list = [s.strip() for s in synonyms_text.split(',') if s.strip()]
-                    print(f"Found {len(synonyms_list)} synonyms in Basic Tunings B2")
-            
-            # Look for search volume
-            for i in range(min(20, basic_tunings_df.shape[0])):
-                if i < basic_tunings_df.shape[0] and basic_tunings_df.shape[1] > 0:
-                    col_a = str(basic_tunings_df.iloc[i, 0]).strip() if not pd.isna(basic_tunings_df.iloc[i, 0]) else ""
-                    if "search volume" in col_a.lower() and basic_tunings_df.shape[1] > 1:
-                        if not pd.isna(basic_tunings_df.iloc[i, 1]):
-                            search_volume = str(basic_tunings_df.iloc[i, 1]).strip()
-                            print(f"Found search volume: {search_volume}")
-                    
-                    if "competition" in col_a.lower() and basic_tunings_df.shape[1] > 1:
-                        if not pd.isna(basic_tunings_df.iloc[i, 1]):
-                            competition_level = str(basic_tunings_df.iloc[i, 1]).strip()
-                            print(f"Found competition level: {competition_level}")
-                    
-                    # Look for word count
-                    if ("word count" in col_a.lower() or "cp492" in col_a.lower()) and basic_tunings_df.shape[1] > 4:
-                        if not pd.isna(basic_tunings_df.iloc[i, 4]):
-                            try:
-                                word_count_text = str(basic_tunings_df.iloc[i, 4]).strip()
-                                match = re.search(r"(\d+)", word_count_text)
-                                if match:
-                                    word_count = int(match.group(1))
-                                    print(f"Found word count: {word_count}")
-                            except:
-                                pass
-            
-            # Extract heading requirements
-            headings_start = -1
-            headings_end = -1
-            
-            # Find the "Headings" section
-            for i in range(min(40, basic_tunings_df.shape[0])):
-                if i < basic_tunings_df.shape[0] and basic_tunings_df.shape[1] > 0:
-                    col_a = str(basic_tunings_df.iloc[i, 0]).strip() if not pd.isna(basic_tunings_df.iloc[i, 0]) else ""
-                    if col_a.lower() == "headings":
-                        headings_start = i + 1
-                        print(f"Found Headings section at row {headings_start}")
-                        # Find where the headings section ends (next non-empty cell in column A)
-                        for j in range(headings_start, min(headings_start + 20, basic_tunings_df.shape[0])):
-                            col_a_next = str(basic_tunings_df.iloc[j, 0]).strip() if not pd.isna(basic_tunings_df.iloc[j, 0]) else ""
-                            if col_a_next and col_a_next.lower() != "headings":
-                                headings_end = j
-                                break
-                        
-                        if headings_end == -1:
-                            headings_end = min(headings_start + 10, basic_tunings_df.shape[0])
-                        
-                        print(f"Headings section ends at row {headings_end}")
-                        break
-            
-            # Process the heading requirements
-            if headings_start > 0 and headings_end > headings_start:
-                for i in range(headings_start, headings_end):
-                    if i < basic_tunings_df.shape[0] and basic_tunings_df.shape[1] > 4:
-                        # Get requirement (column C) and quantity (column E)
-                        req = str(basic_tunings_df.iloc[i, 2]).strip() if not pd.isna(basic_tunings_df.iloc[i, 2]) else ""
-                        qty = str(basic_tunings_df.iloc[i, 4]).strip() if not pd.isna(basic_tunings_df.iloc[i, 4]) else ""
-                        
-                        if req and qty:
-                            print(f"Heading requirement: {req} - Quantity: {qty}")
-                            
-                            # Extract quantities
-                            match = re.search(r"(\d+)", qty)
-                            if match:
-                                qty_num = int(match.group(1))
-                                
-                                # Map to heading structure
-                                if "h2" in req.lower():
-                                    heading_structure["h2"] = qty_num
-                                elif "h3" in req.lower():
-                                    heading_structure["h3"] = qty_num
-                                elif "h4" in req.lower():
-                                    heading_structure["h4"] = qty_num
-                                elif "h5" in req.lower():
-                                    heading_structure["h5"] = qty_num
-        
-        except Exception as e:
-            print(f"Warning: Could not read Basic Tunings sheet - {e}")
-            # We'll continue with other sheets
-        
-        # Read the main sheet
-        if isinstance(file_path, str):
-            df = pd.read_excel(file_path, header=None)
-        else:
-            # If it's a file object (from Streamlit), convert to BytesIO
-            df = pd.read_excel(file_path, header=None)
-        
-        print(f"Main sheet loaded with {df.shape[0]} rows and {df.shape[1]} columns")
-        
-        # If we don't have a primary keyword yet, try to find it in the main sheet
-        if not primary_keyword:
-            for i in range(min(5, df.shape[0])):
-                for j in range(min(3, df.shape[1])):
-                    header = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
-                    if "primary keyword" in header.lower() and i+1 < df.shape[0]:
-                        primary_keyword = str(df.iloc[i+1, j]).strip() if not pd.isna(df.iloc[i+1, j]) else ""
-                        print(f"Found primary keyword in main sheet: {primary_keyword}")
-                        break
-        
-        # Find URL in main sheet
-        for i in range(min(5, df.shape[0])):
-            for j in range(min(3, df.shape[1])):
-                cell_value = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
-                if cell_value.lower().startswith(("http://", "https://")):
-                    url = cell_value
-                    print(f"Found URL in cell ({i},{j}): {url}")
-                    break
-        
-        # Extract variations if we don't have synonyms yet
-        if not synonyms_list:
-            for i in range(min(10, df.shape[0])):
-                for j in range(min(3, df.shape[1])):
-                    cell_value = str(df.iloc[i, j]).strip() if not pd.isna(df.iloc[i, j]) else ""
-                    if "variation" in cell_value.lower():
-                        # Look for variations in the next cell to the right or below
-                        if j+1 < df.shape[1] and not pd.isna(df.iloc[i, j+1]):
-                            raw_variations = str(df.iloc[i, j+1]).strip()
-                            variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()]
-                            print(f"Found {len(variations_list)} variations")
-                        elif i+1 < df.shape[0] and not pd.isna(df.iloc[i+1, j]):
-                            raw_variations = str(df.iloc[i+1, j]).strip()
-                            variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()]
-                            print(f"Found {len(variations_list)} variations")
-            
-            # If we still don't have variations, try row 2
-            if not variations_list and df.shape[0] > 1:
-                raw_variations = str(df.iloc[1, 0]).strip() if not pd.isna(df.iloc[1, 0]) else ""
-                if raw_variations and "," in raw_variations:
-                    variations_list = [p.strip(' "\'') for p in raw_variations.split(",") if p.strip()]
-                    print(f"Found {len(variations_list)} variations in second row")
-        
-        # Extract LSI keywords - start from A8 and ignore A7 and above
-        lsi_start_row = -1
-        
-        # Find the row where LSI keywords start (should be A8)
-        for i in range(7, min(15, df.shape[0])):  # Start from A8 (index 7)
-            if i < df.shape[0]:
-                cell_value = str(df.iloc[i, 0]).strip() if not pd.isna(df.iloc[i, 0]) else ""
-                if cell_value and "," not in cell_value:  # Likely a single keyword, not a list
-                    lsi_start_row = i
-                    print(f"Found LSI keywords starting at row {lsi_start_row + 1}")
-                    break
-        
-        if lsi_start_row > 0:
-            # Process LSI keywords
-            for i in range(lsi_start_row, df.shape[0]):
-                keyword = str(df.iloc[i, 0]).strip() if not pd.isna(df.iloc[i, 0]) else ""
-                if not keyword or keyword.lower() in ["lsi keywords", "semantic keywords", "related keywords"]:
-                    continue
-                
-                # Check if we've reached the end of the LSI section
-                if keyword.lower().startswith("phase ") or keyword.lower() == "entities":
-                    break
-                
-                # Get frequency if available (column B)
-                frequency = 1  # Default frequency
-                if df.shape[1] > 1:
-                    freq_text = str(df.iloc[i, 1]).strip() if not pd.isna(df.iloc[i, 1]) else ""
-                    if freq_text:
-                        try:
-                            match = re.search(r"(\d+)", freq_text)
-                            if match:
-                                frequency = int(match.group(1))
-                        except:
-                            pass
-                
-                if keyword:
-                    lsi_keywords_dict[keyword] = frequency
-            
-            print(f"Extracted {len(lsi_keywords_dict)} LSI keywords")
-        
-        # Extract entities
-        entities_start = -1
-        for i in range(min(40, df.shape[0])):
-            if i < df.shape[0]:
-                cell_value = str(df.iloc[i, 0]).strip() if not pd.isna(df.iloc[i, 0]) else ""
-                if cell_value.lower() == "entities":
-                    entities_start = i + 1
-                    print(f"Found entities starting at row {entities_start + 1}")
-                    break
-        
-        if entities_start > 0:
-            # Process entities
-            for i in range(entities_start, df.shape[0]):
-                if i >= df.shape[0]:
-                    break
-                
-                entity = str(df.iloc[i, 0]).strip() if not pd.isna(df.iloc[i, 0]) else ""
-                if not entity or entity.lower().startswith("phase "):
-                    break
-                
-                if entity:
-                    entities_list.append(entity)
-            
-            print(f"Extracted {len(entities_list)} entities")
-        
-        # If we don't have a primary keyword, use the first synonym/variation or URL
-        if not primary_keyword:
-            if synonyms_list:
-                primary_keyword = synonyms_list[0]
-                print(f"Using first synonym as primary keyword: {primary_keyword}")
-            elif variations_list:
-                primary_keyword = variations_list[0]
-                print(f"Using first variation as primary keyword: {primary_keyword}")
-            else:
-                # Extract domain from URL as a last resort
-                domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-                primary_keyword = domain.replace("-", " ").replace(".", " ")
-                print(f"Using domain as primary keyword: {primary_keyword}")
-        
-        # Extract location information from URL
-        location_info = extract_location_from_url(url)
-        
-        # Process requirements from the main sheet (Roadmap tab)
+        entities = []
+        synonyms = []
+        lsi_keywords = {}
+        heading_structure = {}
         requirements = {}
-        requirements_section_found = False
         
-        # Look for the heading markers in the main sheet
-        for i in range(df.shape[0]):
-            row_text = str(df.iloc[i, 0]).strip() if not pd.isna(df.iloc[i, 0]) else ""
-            
-            # Check if we've found the start of the requirements section
-            if "Phase 1:" in row_text or "Title & Headings" in row_text:
-                requirements_section_found = True
-                start_idx = i + 1
-                print(f"Found Phase 1 requirements at row {start_idx + 1}")
-                continue
-                
-            # Check if we've reached the end of the requirements section
-            possible_end_markers = [
-                "Phase 2:",
-                "Content",
-                "Phase 3:",
-                "Authority",
-                "Phase 4:",
-                "Diversity"
-            ]
-            
-            if requirements_section_found:
-                end_found = False
-                for marker in possible_end_markers:
-                    if marker in row_text:
-                        end_idx = i
-                        end_found = True
-                        break
-                        
-                if end_found:
-                    break
-        
-        # If we found a requirements section, process it
-        if requirements_section_found:
-            end_idx = end_idx if 'end_idx' in locals() else df.shape[0]
-            print(f"Requirements section ends at row {end_idx + 1}")
-            
-            for idx in range(start_idx, end_idx):
-                if idx >= df.shape[0]:
-                    break
-                    
-                req_desc = str(df.iloc[idx, 0]).strip() if not pd.isna(df.iloc[idx, 0]) else ""
-                req_amount_text = str(df.iloc[idx, 1]).strip() if df.shape[1] > 1 and not pd.isna(df.iloc[idx, 1]) else ""
-                
-                if req_desc and req_amount_text:
-                    match = re.search(r"(\d+)", req_amount_text)
-                    if match:
-                        amount = int(match.group(1))
-                        requirements[req_desc] = amount
-                        print(f"Requirement: {req_desc} - Amount: {amount}")
-        
-        # If synonyms_list is empty but we have variations, use variations as synonyms
-        if not synonyms_list and variations_list:
-            synonyms_list = variations_list
-            print("Using variations as synonyms")
-        
-        # Build the final result structure
-        results = {
-            "primary_keyword": primary_keyword,
-            "url": url,
-            "variations": variations_list,
-            "competition_level": competition_level,
-            "search_volume": search_volume,
-            "word_count": word_count,
-            "requirements": requirements,
-            "entities": entities_list,
-            "lsi_keywords": lsi_keywords_dict,
-            "synonyms": synonyms_list,
-            "heading_structure": heading_structure,
-            "content_structure": "",
-            "heading_overrides": [],
-            "debug_info": {
-                "sheets_found": ["Main Sheet"] + (["Basic Tunings"] if 'basic_tunings_df' in locals() else []),
-                "lsi_start_row": lsi_start_row + 1 if lsi_start_row > 0 else "Not found",
-                "entities_start_row": entities_start + 1 if entities_start > 0 else "Not found",
-                "headings_section": f"Rows {headings_start + 1}-{headings_end}" if headings_start > 0 else "Not found in Basic Tunings"
-            }
+        # Debug info
+        debug_info = {
+            "sheets_found": [sheet for sheet in wb.sheetnames],
+            "lsi_start_row": None,
+            "entities_start_row": None,
+            "headings_section": None
         }
         
-        print(f"Successfully extracted requirements for {primary_keyword}")
+        # Look for the Basic Tunings sheet
+        basic_tunings_sheet = None
+        for sheet_name in wb.sheetnames:
+            if "basic" in sheet_name.lower() and "tunings" in sheet_name.lower():
+                basic_tunings_sheet = wb[sheet_name]
+                break
+        
+        if basic_tunings_sheet:
+            print("Found Basic Tunings sheet")
+            
+            # Extract primary keyword from B1
+            if basic_tunings_sheet["B1"].value:
+                primary_keyword = basic_tunings_sheet["B1"].value.strip()
+                print(f"Primary keyword from B1: {primary_keyword}")
+            
+            # Extract search volume and competition level
+            for row in range(1, 20):  # Check first 20 rows
+                cell_a = basic_tunings_sheet.cell(row=row, column=1).value
+                if cell_a:
+                    cell_a_lower = str(cell_a).lower()
+                    if "search volume" in cell_a_lower or "monthly searches" in cell_a_lower:
+                        search_volume = basic_tunings_sheet.cell(row=row, column=2).value
+                        if search_volume:
+                            search_volume = str(search_volume).strip()
+                            print(f"Found search volume: {search_volume}")
+                    elif "competition" in cell_a_lower or "difficulty" in cell_a_lower:
+                        competition_level = basic_tunings_sheet.cell(row=row, column=2).value
+                        if competition_level:
+                            competition_level = str(competition_level).strip()
+                            print(f"Found competition level: {competition_level}")
+            
+            # Extract synonyms from B2 (pipe-separated)
+            if basic_tunings_sheet["B2"].value:
+                raw_synonyms = basic_tunings_sheet["B2"].value
+                if "|" in raw_synonyms:
+                    synonyms = [s.strip() for s in raw_synonyms.split("|") if s.strip()]
+                else:
+                    synonyms = [raw_synonyms.strip()]
+                print(f"Found synonyms: {synonyms}")
+            
+            # Extract LSI keywords starting from A8 (ignore A7 and above)
+            lsi_start_row = 8
+            debug_info["lsi_start_row"] = lsi_start_row
+            
+            # Find the entities section
+            entities_start_row = None
+            for row in range(lsi_start_row, lsi_start_row + 100):  # Look for "Entities" within reasonable range
+                cell_a = basic_tunings_sheet.cell(row=row, column=1).value
+                if cell_a and isinstance(cell_a, str) and "entities" in cell_a.lower():
+                    entities_start_row = row + 1  # Start from the next row
+                    debug_info["entities_start_row"] = entities_start_row
+                    break
+            
+            # If we found a valid entities section, extract LSI keywords up to this point
+            if entities_start_row:
+                for row in range(lsi_start_row, entities_start_row - 1):
+                    keyword = basic_tunings_sheet.cell(row=row, column=1).value
+                    frequency = basic_tunings_sheet.cell(row=row, column=3).value
+                    
+                    if keyword and keyword != "Keyword":  # Skip header row
+                        keyword = str(keyword).strip()
+                        
+                        # Convert frequency to int, defaulting to 1 if not found or invalid
+                        try:
+                            frequency = int(frequency) if frequency else 1
+                        except (ValueError, TypeError):
+                            frequency = 1
+                        
+                        lsi_keywords[keyword] = frequency
+                
+                # Extract entities
+                for row in range(entities_start_row, entities_start_row + 30):  # Assume max 30 entities
+                    entity = basic_tunings_sheet.cell(row=row, column=1).value
+                    if not entity:
+                        break  # Stop at first empty cell
+                    
+                    entities.append(str(entity).strip())
+            
+            # Find headings structure
+            headings_section = None
+            for row in range(1, 100):  # Look for "Headings" within reasonable range
+                cell_a = basic_tunings_sheet.cell(row=row, column=1).value
+                if cell_a and isinstance(cell_a, str) and "headings" in cell_a.lower():
+                    headings_section = row
+                    debug_info["headings_section"] = headings_section
+                    break
+            
+            if headings_section:
+                # Process rows until another non-empty value in column A (that's not a heading level)
+                row = headings_section + 1
+                while row < headings_section + 20:  # Limit search to 20 rows after heading section
+                    cell_a = basic_tunings_sheet.cell(row=row, column=1).value
+                    cell_c = basic_tunings_sheet.cell(row=row, column=3).value
+                    cell_e = basic_tunings_sheet.cell(row=row, column=5).value
+                    
+                    if cell_a and "h" in str(cell_a).lower() and len(str(cell_a).strip()) <= 3:
+                        heading_level = str(cell_a).lower().strip()
+                        
+                        # Get quantity from column E if available, otherwise default to column C
+                        quantity = cell_e if cell_e else cell_c
+                        try:
+                            quantity = int(quantity)
+                        except (ValueError, TypeError):
+                            quantity = 0
+                        
+                        if quantity > 0:
+                            heading_structure[heading_level] = quantity
+                    
+                    elif cell_a and not (isinstance(cell_a, str) and "heading" in cell_a.lower()):
+                        # Found a non-empty cell that doesn't look like a heading level or heading-related label
+                        break
+                    
+                    row += 1
+        
+        print(f"Extracted LSI keywords: {lsi_keywords}")
+        print(f"Extracted entities: {entities}")
+        print(f"Extracted heading structure: {heading_structure}")
+        
+        # If we don't have a primary keyword, use the first synonym/variation
+        if not primary_keyword and synonyms:
+            primary_keyword = synonyms[0]
+            print(f"Using first synonym as primary keyword: {primary_keyword}")
+        
+        # Compile results
+        results = {
+            "primary_keyword": primary_keyword,
+            "search_volume": search_volume,
+            "competition_level": competition_level,
+            "synonyms": synonyms,
+            "lsi_keywords": lsi_keywords,
+            "entities": entities,
+            "heading_structure": heading_structure,
+            "requirements": requirements,
+            "word_count": 1500,  # Default word count
+            "debug_info": debug_info
+        }
+        
+        print(f"✅ Successfully extracted requirements for {primary_keyword}")
         return results
+        
     except Exception as e:
-        print(f"Error parsing CORA report: {e}")
-        raise
-
-##############################################################################
-# EXTRACT LOCATION FROM URL
-##############################################################################
-def extract_location_from_url(url):
-    """Extract location information from URL for local SEO optimization."""
-    city_state_pattern = re.compile(r'(?:[-_/])([a-z]+[-_]?[a-z]*?)(?:[-_/])([a-z]{2})(?:[-_/]|$)', re.IGNORECASE)
-    city_pattern = re.compile(r'(?:in-|near-|[-_/])([a-z]+(?:[-_][a-z]+)*)(?:[-_/]|$)', re.IGNORECASE)
-    match = city_state_pattern.search(url)
-    if match:
-        city = match.group(1).replace('-', ' ').replace('_', ' ').title()
-        state = match.group(2).upper()
-        return {"city": city, "state": state}
-    match = city_pattern.search(url)
-    if match:
-        city = match.group(1).replace('-', ' ').replace('_', ' ').title()
-        return {"city": city}
-    return None
-
-##############################################################################
-# EXTRACT LSI KEYWORDS
-##############################################################################
-MAX_LSI_KEYWORDS = 40
-
-def extract_lsi_keywords(file_path):
-    """Extracts LSI keywords from the CORA report, gracefully handling empty data."""
-    try:
-        # Handle different file path types
-        if isinstance(file_path, str):
-            try:
-                xl = pd.ExcelFile(file_path, engine="openpyxl")
-            except:
-                print("Warning: Could not open LSI Keywords sheet")
-                return []
-        else:
-            # Handle Streamlit's UploadedFile object
-            import io
-            if hasattr(file_path, 'getvalue'):
-                bytes_data = file_path.getvalue()
-                xl = pd.ExcelFile(io.BytesIO(bytes_data), engine="openpyxl")
-            else:
-                xl = pd.ExcelFile(file_path, engine="openpyxl")
-
-        # Check if LSI Keywords sheet exists
-        if "LSI Keywords" not in xl.sheet_names:
-            print("Warning: LSI Keywords sheet not found in Excel file")
-            return []
-        
-        # Load the LSI Keywords sheet
-        df = pd.read_excel(xl, sheet_name="LSI Keywords", header=None)
-        
-        # Extract keywords from first column
-        keywords = []
-        for i in range(len(df)):
-            if not pd.isna(df.iloc[i, 0]) and df.iloc[i, 0] != "":
-                keywords.append(df.iloc[i, 0])
-        
-        return keywords
-    except Exception as e:
-        print(f"Error extracting LSI keywords: {e}")
-        return []
-
-##############################################################################
-# EXTRACT ENTITIES
-##############################################################################
-def extract_entities(file_path):
-    """Extracts entities from the CORA report, gracefully handling empty data."""
-    try:
-        # Handle different file path types
-        if isinstance(file_path, str):
-            try:
-                xl = pd.ExcelFile(file_path, engine="openpyxl")
-            except:
-                print("Warning: Could not open Entity Mentions sheet")
-                return []
-        else:
-            # Handle Streamlit's UploadedFile object
-            import io
-            if hasattr(file_path, 'getvalue'):
-                bytes_data = file_path.getvalue()
-                xl = pd.ExcelFile(io.BytesIO(bytes_data), engine="openpyxl")
-            else:
-                xl = pd.ExcelFile(file_path, engine="openpyxl")
-        
-        # Check if Entity Mentions sheet exists
-        if "Entity Mentions" not in xl.sheet_names:
-            print("Warning: Entity Mentions sheet not found in Excel file")
-            return []
-        
-        # Load the Entity Mentions sheet
-        df = pd.read_excel(xl, sheet_name="Entity Mentions", header=None)
-        
-        # Extract entities from first column
-        entities = []
-        for i in range(len(df)):
-            if not pd.isna(df.iloc[i, 0]) and df.iloc[i, 0] != "":
-                entities.append(df.iloc[i, 0])
-        
-        return entities
-    except Exception as e:
-        print(f"Error extracting entities: {e}")
-        return []
-
-##############################################################################
-# EXTRACT MARKDOWN FROM API RESPONSE
-##############################################################################
-def extract_markdown_from_response(response_text):
-    """Extracts Markdown content from the API response, expecting it within triple backticks."""
-    match = re.search(r'```(?:markdown|md)?(.*?)```', response_text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    else:
-        return response_text.strip()
+        print(f"❌ Error parsing CORA report: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return minimal data to avoid breaking downstream processes
+        return {
+            "primary_keyword": "Sample Keyword",
+            "search_volume": "Unknown",
+            "competition_level": "Medium",
+            "synonyms": [],
+            "lsi_keywords": {},
+            "entities": [],
+            "heading_structure": {"h2": 3, "h3": 6},
+            "requirements": {},
+            "word_count": 1500,
+            "debug_info": {"error": str(e)}
+        }
 
 ##############################################################################
 # GENERATE HEADING STRUCTURE
@@ -571,8 +289,8 @@ def generate_heading_structure(primary_keyword, heading_structure, lsi_keywords=
 ##############################################################################
 def generate_initial_markdown(requirements, claude_api, openai_api):
     """Generates an SEO-optimized markdown page based on CORA report requirements using the new prompt structure."""
-    url = requirements["url"]
-    variations = requirements["variations"]
+    primary_keyword = requirements["primary_keyword"]
+    synonyms = requirements["synonyms"]
     reqs = requirements["requirements"]
     lsi_dict = requirements["lsi_keywords"]
     entities = requirements["entities"]
@@ -582,7 +300,7 @@ def generate_initial_markdown(requirements, claude_api, openai_api):
     # Format requirements, including heading overrides
     req_list = heading_overrides + [f"{desc}: add {amount}" for desc, amount in reqs.items() if "Number of H" not in desc or "tags" not in desc]
     requirements_formatted = "\n".join(req_list)
-    variations_formatted = ", ".join(variations)
+    synonyms_formatted = ", ".join(synonyms)
     lsi_formatted = "\n".join([f"'{kw}' => at least {freq} occurrences" for kw, freq in lsi_dict.items()])
     entities_formatted = ", ".join(entities)
 
@@ -599,7 +317,7 @@ def generate_initial_markdown(requirements, claude_api, openai_api):
 </requirements>
 
 <variations>
-{variations_formatted}
+{synonyms_formatted}
 </variations>
 
 <lsi>
@@ -750,13 +468,14 @@ Now that the headings are laid out and confirmed. Generate content for each sect
 ##############################################################################
 # SAVE MARKDOWN
 ##############################################################################
-def save_markdown_to_file(markdown_str, url, iteration):
+def save_markdown_to_file(markdown_str, keyword, iteration):
     """Saves the markdown content to a file with a timestamped filename."""
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    domain = url.split("//")[1].split("/")[0].replace("www.", "")
-    filename = f"{OUTPUT_DIR}/seo_content_{domain}_iteration_{iteration}_{timestamp}.md"
+    safe_keyword = keyword.lower().replace(" ", "-").replace("/", "-")
+    
+    filename = f"{OUTPUT_DIR}/seo_content_{safe_keyword}_iteration_{iteration}_{timestamp}.md"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.write(markdown_str)
@@ -872,7 +591,7 @@ def main(claude_api, openai_api):
         try:
             print("Parsing CORA report...")
             requirements = parse_cora_report(file_path)
-            print(f"✅ Successfully extracted requirements for {requirements['url']}")
+            print(f"✅ Successfully extracted requirements for {requirements['primary_keyword']}")
             print(f"Primary Keyword: {requirements['primary_keyword']}")
             print(f"Word Count Target: {requirements['word_count']}")
             print(f"Entities Found: {len(requirements['entities'])}")
@@ -886,7 +605,7 @@ def main(claude_api, openai_api):
         markdown_content = generate_initial_markdown(requirements, claude_api, openai_api)
         
         # Save markdown to file
-        save_markdown_to_file(markdown_content, requirements["url"], 1)
+        save_markdown_to_file(markdown_content, requirements["primary_keyword"], 1)
         
         return markdown_content
     except Exception as e:
