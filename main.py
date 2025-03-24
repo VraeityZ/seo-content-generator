@@ -4,10 +4,12 @@ import pandas as pd
 import anthropic
 from openai import OpenAI
 from datetime import datetime
-from bs4 import BeautifulSoup
 import warnings
+import openpyxl
 import math
-import io
+import logging
+import re
+
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.styles.stylesheet")
 
 # Define output directory
@@ -17,16 +19,17 @@ OUTPUT_DIR = "output_markdown"
 def get_api_keys(claude_api, openai_api):
     return claude_api, openai_api
 
-# Model selection (choose between Claude and ChatGPT)
+# Model selection
 platform = "Claude"  # @param ["Claude"]
-claude_model = "claude-3-7-sonnet-latest"  # Verify with Anthropic API docs
-chatgpt_model = "o1-mini-2024-09-12"  # ChatGPT's o1 model
+claude_model = "claude-3-7-sonnet-latest"
+chatgpt_model = "o1-mini-2024-09-12"
 
-# Heading control variables
+# Heading control variables (global for simplicity; adjust as needed for Streamlit)
 h2_control = 0  # @param {"type":"number","placeholder":"0"}
 h3_control = 0  # @param {"type":"number","placeholder":"0"}
 h4_control = 0  # @param {"type":"number","placeholder":"0"}
 h5_control = 0  # @param {"type":"number","placeholder":"0"}
+h6_control = 0  # @param {"type":"number","placeholder":"0"}
 
 # Initialize API clients
 def initialize_api_clients(claude_api, openai_api):
@@ -44,170 +47,240 @@ def initialize_api_clients(claude_api, openai_api):
 # UPLOAD FILE
 ##############################################################################
 def upload_file():
-    """A placeholder function for compatibility. In Streamlit, file upload is handled directly by the Streamlit UI."""
+    """Placeholder for Streamlit file upload."""
     return None
 
 ##############################################################################
 # PARSE CORA REPORT
 ##############################################################################
 def parse_cora_report(file_path):
-    """Parses a CORA Excel report and extracts the SEO requirements."""
+    """Parses a CORA Excel report and extracts SEO requirements."""
     try:
         # Load the Excel workbook
         wb = openpyxl.load_workbook(file_path, data_only=True)
         
         # Initialize default values
         primary_keyword = ""
-        search_volume = "Unknown"
-        competition_level = "Medium"
         entities = []
-        synonyms = []
+        variations = []
         lsi_keywords = {}
         heading_structure = {}
         requirements = {}
+        word_count = 1500  # Default
         
         # Debug info
         debug_info = {
-            "sheets_found": [sheet for sheet in wb.sheetnames],
+            "sheets_found": wb.sheetnames,
             "lsi_start_row": None,
             "entities_start_row": None,
             "headings_section": None
         }
         
-        # Look for the Basic Tunings sheet
-        basic_tunings_sheet = None
-        for sheet_name in wb.sheetnames:
-            if "basic" in sheet_name.lower() and "tunings" in sheet_name.lower():
-                basic_tunings_sheet = wb[sheet_name]
-                break
-        
-        if basic_tunings_sheet:
-            print("Found Basic Tunings sheet")
+        # Parse "Roadmap" sheet
+        if "Roadmap" in wb.sheetnames:
+            roadmap_sheet = wb["Roadmap"]
             
-            # Extract primary keyword from B1
-            if basic_tunings_sheet["B1"].value:
-                primary_keyword = basic_tunings_sheet["B1"].value.strip()
-                print(f"Primary keyword from B1: {primary_keyword}")
+            # Variations from A2
+            raw_variations = roadmap_sheet["A2"].value
+            variations = [v.strip(' "\'') for v in raw_variations.split(",") if v.strip()] if raw_variations else []
             
-            # Extract search volume and competition level
-            for row in range(1, 20):  # Check first 20 rows
-                cell_a = basic_tunings_sheet.cell(row=row, column=1).value
-                if cell_a:
-                    cell_a_lower = str(cell_a).lower()
-                    if "search volume" in cell_a_lower or "monthly searches" in cell_a_lower:
-                        search_volume = basic_tunings_sheet.cell(row=row, column=2).value
-                        if search_volume:
-                            search_volume = str(search_volume).strip()
-                            print(f"Found search volume: {search_volume}")
-                    elif "competition" in cell_a_lower or "difficulty" in cell_a_lower:
-                        competition_level = basic_tunings_sheet.cell(row=row, column=2).value
-                        if competition_level:
-                            competition_level = str(competition_level).strip()
-                            print(f"Found competition level: {competition_level}")
+            # Extract requirements from "Phase 1: Title & Headings"
+            marker_start = "Phase 1: Title & Headings"
+            possible_end_markers = [
+                "Phase 2: Content",
+                "Phase 3: Authority",
+                "Phase 4: Diversity",
+                "Phase 6: Search Result Presentation",
+                "Phase 7: Outbound Linking From the Page"
+            ]
             
-            # Extract synonyms from B2 (pipe-separated)
-            if basic_tunings_sheet["B2"].value:
-                raw_synonyms = basic_tunings_sheet["B2"].value
-                if "|" in raw_synonyms:
-                    synonyms = [s.strip() for s in raw_synonyms.split("|") if s.strip()]
-                else:
-                    synonyms = [raw_synonyms.strip()]
-                print(f"Found synonyms: {synonyms}")
-            
-            # Extract LSI keywords starting from A8 (ignore A7 and above)
-            lsi_start_row = 8
-            debug_info["lsi_start_row"] = lsi_start_row
-            
-            # Find the entities section
-            entities_start_row = None
-            for row in range(lsi_start_row, lsi_start_row + 100):  # Look for "Entities" within reasonable range
-                cell_a = basic_tunings_sheet.cell(row=row, column=1).value
-                if cell_a and isinstance(cell_a, str) and "entities" in cell_a.lower():
-                    entities_start_row = row + 1  # Start from the next row
-                    debug_info["entities_start_row"] = entities_start_row
+            # Find start row
+            start_row = None
+            for row in range(1, 100):
+                cell_a = roadmap_sheet.cell(row=row, column=1).value
+                if cell_a and marker_start in str(cell_a).strip():
+                    start_row = row + 1
                     break
-            
-            # If we found a valid entities section, extract LSI keywords up to this point
-            if entities_start_row:
-                for row in range(lsi_start_row, entities_start_row - 1):
-                    keyword = basic_tunings_sheet.cell(row=row, column=1).value
-                    frequency = basic_tunings_sheet.cell(row=row, column=3).value
                     
-                    if keyword and keyword != "Keyword":  # Skip header row
-                        keyword = str(keyword).strip()
-                        
-                        # Convert frequency to int, defaulting to 1 if not found or invalid
+            if start_row:
+                # Find end row based on possible markers
+                end_row = None
+                for row in range(start_row, 100):
+                    cell_a = roadmap_sheet.cell(row=row, column=1).value
+                    if cell_a:
+                        cell_text = str(cell_a).strip()
+                        if any(marker in cell_text for marker in possible_end_markers):
+                            end_row = row
+                            break
+                            
+                if not end_row:
+                    end_row = roadmap_sheet.max_row
+                    
+                # Extract requirements
+                for row in range(start_row, end_row):
+                    req_desc = roadmap_sheet.cell(row=row, column=1).value
+                    req_amount_text = roadmap_sheet.cell(row=row, column=2).value
+                    
+                    if req_desc and req_amount_text:
                         try:
-                            frequency = int(frequency) if frequency else 1
+                            # Use regex to find the first number in the text
+                            match = re.search(r"(\d+)", str(req_amount_text))
+                            if match:
+                                amount = int(match.group(1))
+                                requirements[req_desc] = amount
                         except (ValueError, TypeError):
-                            frequency = 1
-                        
-                        lsi_keywords[keyword] = frequency
-                
-                # Extract entities
-                for row in range(entities_start_row, entities_start_row + 30):  # Assume max 30 entities
-                    entity = basic_tunings_sheet.cell(row=row, column=1).value
-                    if not entity:
-                        break  # Stop at first empty cell
-                    
+                            logging.warning(f"Could not parse requirement amount: {req_amount_text}")
+                            continue
+        
+        # Parse "Basic Tunings" sheet
+        if "Basic Tunings" in wb.sheetnames:
+            basic_tunings_sheet = wb["Basic Tunings"]
+            # Primary keyword from B1
+            primary_keyword = basic_tunings_sheet["B1"].value.strip() if basic_tunings_sheet["B1"].value else ""
+            # Word count from CP492
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CP492":
+                    word_count_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if word_count_value:
+                        try:
+                            word_count = int(word_count_value)
+                        except ValueError:
+                            pass
+                    break
+            # Number of H2 Tags
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR005":
+                    heading_2_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if heading_2_value:
+                        try:
+                            heading_2 = int(heading_2_value)
+                        except ValueError:
+                            pass
+                    break
+            # Number of H3 Tags
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR006":
+                    heading_3_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if heading_3_value:
+                        try:
+                            heading_3 = int(heading_3_value)
+                        except ValueError:
+                            pass
+                    break
+            # Number of H4 Tags
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR007":
+                    heading_4_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if heading_4_value:
+                        try:
+                            heading_4 = int(heading_4_value)
+                        except ValueError:
+                            pass
+                    break
+            # Number of H5 Tags
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR008":
+                    heading_5_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if heading_5_value:
+                        try:
+                            heading_5 = int(heading_5_value)
+                        except ValueError:
+                            pass
+                    break
+            # Number of H6 Tags
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR009":
+                    heading_6_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if heading_6_value:
+                        try:
+                            heading_6 = int(heading_6_value)
+                        except ValueError:
+                            pass
+                    break   
+        # Number of heading tags
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR003":
+                    total_heading_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if total_heading_value:
+                        try:
+                            total_heading = int(total_heading_value)
+                        except ValueError:
+                            pass
+                    break   
+            requirements["Number of H2 tags"] = heading_2
+            requirements["Number of H3 tags"] = heading_3
+            requirements["Number of H4 tags"] = heading_4
+            requirements["Number of H5 tags"] = heading_5
+            requirements["Number of H6 tags"] = heading_6
+            requirements["Number of heading tags"] = total_heading
+
+        # Parse "LSI Keywords" sheet
+        lsi_sheet_name = next((s for s in wb.sheetnames if "LSI" in s and "Keywords" in s), None)
+        if lsi_sheet_name:
+            lsi_sheet = wb[lsi_sheet_name]
+            for row in range(7, lsi_sheet.max_row + 1):  # Header at row 6
+                keyword = lsi_sheet.cell(row=row, column=1).value
+                avg = lsi_sheet.cell(row=row, column=2).value
+                deficit = lsi_sheet.cell(row=row, column=3).value
+                if keyword and avg:
+                    try:
+                        avg = float(avg)
+                        deficit = float(deficit) if deficit else 0
+                        if deficit > 0:
+                            lsi_keywords[keyword] = math.ceil(avg + deficit)
+                    except ValueError:
+                        continue
+            lsi_keywords = dict(sorted(lsi_keywords.items(), key=lambda x: x[1], reverse=True)[:40])
+        
+        # Parse "Entities" sheet
+        if "Entities" in wb.sheetnames:
+            entities_sheet = wb["Entities"]
+            for row in range(3, entities_sheet.max_row + 1):  # Header at row 2
+                entity = entities_sheet.cell(row=row, column=1).value
+                if entity:
                     entities.append(str(entity).strip())
-            
-            # Find headings structure
-            headings_section = None
-            for row in range(1, 100):  # Look for "Headings" within reasonable range
-                cell_a = basic_tunings_sheet.cell(row=row, column=1).value
-                if cell_a and isinstance(cell_a, str) and "headings" in cell_a.lower():
-                    headings_section = row
-                    debug_info["headings_section"] = headings_section
-                    break
-            
-            if headings_section:
-                # Process rows until another non-empty value in column A (that's not a heading level)
-                row = headings_section + 1
-                while row < headings_section + 20:  # Limit search to 20 rows after heading section
-                    cell_a = basic_tunings_sheet.cell(row=row, column=1).value
-                    cell_c = basic_tunings_sheet.cell(row=row, column=3).value
-                    cell_e = basic_tunings_sheet.cell(row=row, column=5).value
-                    
-                    if cell_a and "h" in str(cell_a).lower() and len(str(cell_a).strip()) <= 3:
-                        heading_level = str(cell_a).lower().strip()
-                        
-                        # Get quantity from column E if available, otherwise default to column C
-                        quantity = cell_e if cell_e else cell_c
+        
+        # Handle heading overrides
+        heading_controls = {
+            2: heading_2,
+            3: heading_3,
+            4: heading_4,
+            5: heading_5,
+            6: heading_6
+        }
+        heading_overrides = []
+        for level, control in heading_controls.items():
+            if control > 0:
+                for key in list(requirements.keys()):
+                    if f"number of h{level} tags" in key.lower():
+                        del requirements[key]
+                requirements[f"Number of H{level} tags"] = control
+                heading_overrides.append(f"Important: Headings override. Ignore Number of H{level} required. Instead use {control}")
+        
+        if "Number of Heading Tags" in requirements:
+            total_headings = 1  # For H1
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR003":
+                    total_heading_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if total_heading_value:
                         try:
-                            quantity = int(quantity)
-                        except (ValueError, TypeError):
-                            quantity = 0
-                        
-                        if quantity > 0:
-                            heading_structure[heading_level] = quantity
-                    
-                    elif cell_a and not (isinstance(cell_a, str) and "heading" in cell_a.lower()):
-                        # Found a non-empty cell that doesn't look like a heading level or heading-related label
-                        break
-                    
-                    row += 1
-        
-        print(f"Extracted LSI keywords: {lsi_keywords}")
-        print(f"Extracted entities: {entities}")
-        print(f"Extracted heading structure: {heading_structure}")
-        
-        # If we don't have a primary keyword, use the first synonym/variation
-        if not primary_keyword and synonyms:
-            primary_keyword = synonyms[0]
-            print(f"Using first synonym as primary keyword: {primary_keyword}")
+                            total_heading = int(total_heading_value)
+                        except ValueError:
+                            pass
+                    break   
+            requirements["Number of Heading Tags"] = total_heading
+
         
         # Compile results
         results = {
             "primary_keyword": primary_keyword,
-            "search_volume": search_volume,
-            "competition_level": competition_level,
-            "synonyms": synonyms,
+            "variations": variations,
             "lsi_keywords": lsi_keywords,
             "entities": entities,
-            "heading_structure": heading_structure,
+            "heading_structure": heading_structure,  # Kept for compatibility, though unused
             "requirements": requirements,
-            "word_count": 1500,  # Default word count
+            "word_count": word_count,
+            "heading_overrides": heading_overrides,
             "debug_info": debug_info
         }
         
@@ -218,17 +291,15 @@ def parse_cora_report(file_path):
         print(f"❌ Error parsing CORA report: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Return minimal data to avoid breaking downstream processes
         return {
             "primary_keyword": "Sample Keyword",
-            "search_volume": "Unknown",
-            "competition_level": "Medium",
-            "synonyms": [],
+            "variations": [],
             "lsi_keywords": {},
             "entities": [],
             "heading_structure": {"h2": 3, "h3": 6},
             "requirements": {},
             "word_count": 1500,
+            "heading_overrides": [],
             "debug_info": {"error": str(e)}
         }
 
@@ -236,49 +307,26 @@ def parse_cora_report(file_path):
 # GENERATE HEADING STRUCTURE
 ##############################################################################
 def generate_heading_structure(primary_keyword, heading_structure, lsi_keywords=None, entities=None):
-    """Generates a heading structure based on SEO requirements.
-    
-    Args:
-        primary_keyword: The main keyword for the content
-        heading_structure: Dict containing required number of headings (h2, h3, etc.)
-        lsi_keywords: List of LSI keywords to potentially use in headings
-        entities: List of entities to potentially use in headings
-        
-    Returns:
-        A string representation of the heading structure requirements
-    """
+    """Generates a heading structure string based on SEO requirements."""
     if lsi_keywords is None:
         lsi_keywords = []
     if entities is None:
         entities = []
     
     headings_text = "HEADING STRUCTURE:\n"
-    
-    # Add H1 requirements
     headings_text += f"1. H1: Include one H1 title that contains the primary keyword '{primary_keyword}'\n"
     
-    # Add requirements for other heading levels
     for level in range(2, 6):
         key = f"h{level}"
         count = heading_structure.get(key, 0)
         if count > 0:
             headings_text += f"{level}. H{level}: Include approximately {count} H{level} headings"
-            
-            # Add suggestions for H2 and H3 headings
             if level <= 3 and (lsi_keywords or entities):
                 headings_text += " - consider including these topics:\n"
-                
-                # Add some LSI keywords as potential heading topics
-                sample_keywords = lsi_keywords[:min(len(lsi_keywords), 3)]
-                if sample_keywords:
-                    for kw in sample_keywords:
-                        headings_text += f"   - {kw}\n"
-                
-                # Add some entities as potential heading topics
-                sample_entities = entities[:min(len(entities), 2)]
-                if sample_entities:
-                    for entity in sample_entities:
-                        headings_text += f"   - {entity}\n"
+                for kw in lsi_keywords[:min(len(lsi_keywords), 3)]:
+                    headings_text += f"   - {kw}\n"
+                for entity in entities[:min(len(entities), 2)]:
+                    headings_text += f"   - {entity}\n"
             else:
                 headings_text += "\n"
     
@@ -288,19 +336,18 @@ def generate_heading_structure(primary_keyword, heading_structure, lsi_keywords=
 # GENERATE INITIAL MARKDOWN
 ##############################################################################
 def generate_initial_markdown(requirements, claude_api, openai_api):
-    """Generates an SEO-optimized markdown page based on CORA report requirements using the new prompt structure."""
+    """Generates SEO-optimized markdown based on CORA report requirements."""
     primary_keyword = requirements["primary_keyword"]
-    synonyms = requirements["synonyms"]
+    variations = requirements["variations"]
     reqs = requirements["requirements"]
     lsi_dict = requirements["lsi_keywords"]
     entities = requirements["entities"]
     word_count = requirements["word_count"]
     heading_overrides = requirements.get("heading_overrides", [])
 
-    # Format requirements, including heading overrides
     req_list = heading_overrides + [f"{desc}: add {amount}" for desc, amount in reqs.items() if "Number of H" not in desc or "tags" not in desc]
     requirements_formatted = "\n".join(req_list)
-    synonyms_formatted = ", ".join(synonyms)
+    variations_formatted = ", ".join(variations)
     lsi_formatted = "\n".join([f"'{kw}' => at least {freq} occurrences" for kw, freq in lsi_dict.items()])
     entities_formatted = ", ".join(entities)
 
@@ -317,7 +364,7 @@ def generate_initial_markdown(requirements, claude_api, openai_api):
 </requirements>
 
 <variations>
-{synonyms_formatted}
+{variations_formatted}
 </variations>
 
 <lsi>
@@ -411,13 +458,9 @@ Now that the headings are laid out and confirmed. Generate content for each sect
 4C1. Low Value: "[Topic] is important."
 4C2. High Value: "[Topic] can [achieve specific benefit]—here's a [practical method] to [take action].
 5. Review the generated content and Confirm the heading hierarchy is being used effectively. The heading structure should always follow the hierarchy.
-6. For front-matter, include at the top of the markdown:
-   ```
-   ---
-   title: "Your Title Here"
-   description: "Your meta description here"
-   ---
-   ```
+6. For front-matter, include at the top of the markdown:    
+title: "Your Title Here"
+description: "Your meta description here"
 7. IMPORTANT: Ensure and Confirm each step in the final Step list is met.
 </final step>
 """
@@ -425,36 +468,19 @@ Now that the headings are laid out and confirmed. Generate content for each sect
     with open("prompt.txt", "w") as f:
         f.write(f"System Prompt:\n{system_prompt}\n\n\nUser Prompt:{user_prompt}")
     print("=== Prompt output saved to prompt.txt ===\n")
-    # API call based on platform
+    
     client, model = initialize_api_clients(claude_api, openai_api)
     if platform == "Claude":
         response = client.messages.create(
             model=model,
             max_tokens=15000,
             system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": user_prompt
-                        }
-                    ]
-                }
-            ],
-            thinking={
-                "type": "enabled",
-                "budget_tokens": 14750
-            }
+            messages=[{"role": "user", "content": [{"type": "text", "text": user_prompt}]}],
+            thinking={"type": "enabled", "budget_tokens": 14750}
         )
-        # Extract text from text blocks
-        markdown_content = ""
-        for block in response.content:
-            if block.type == "text":
-                markdown_content += block.text
+        markdown_content = "".join(block.text for block in response.content if block.type == "text")
         markdown_content = extract_markdown_from_response(markdown_content)
-    else:  # ChatGPT
+    else:
         full_prompt = system_prompt + "\n\n" + user_prompt
         response = client.chat.completions.create(
             model=model,
@@ -469,14 +495,13 @@ Now that the headings are laid out and confirmed. Generate content for each sect
 # SAVE MARKDOWN
 ##############################################################################
 def save_markdown_to_file(markdown_str, keyword, iteration):
-    """Saves the markdown content to a file with a timestamped filename."""
+    """Saves markdown content to a file."""
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_keyword = keyword.lower().replace(" ", "-").replace("/", "-")
-    
     filename = f"{OUTPUT_DIR}/seo_content_{safe_keyword}_iteration_{iteration}_{timestamp}.md"
-
+    
     with open(filename, "w", encoding="utf-8") as f:
         f.write(markdown_str)
     
@@ -484,86 +509,76 @@ def save_markdown_to_file(markdown_str, keyword, iteration):
     return filename
 
 ##############################################################################
+# EXTRACT MARKDOWN FROM RESPONSE
+##############################################################################
+def extract_markdown_from_response(response_text):
+    """Extracts markdown content from an API response."""
+    markdown_match = re.search(r'```(?:markdown)?(.*?)```', response_text, re.DOTALL)
+    if markdown_match:
+        return markdown_match.group(1).strip()
+    return response_text.strip()
+
+##############################################################################
 # EXTRACT HTML FROM RESPONSE
 ##############################################################################
 def extract_html_from_response(response_text):
     """Extracts HTML content from an API response."""
-    # Look for HTML content within HTML tags or code blocks
     html_match = re.search(r'```(?:html)?(.*?)```', response_text, re.DOTALL)
     if html_match:
         return html_match.group(1).strip()
     
-    # If no HTML code blocks, try to find content between <html> tags
     html_tag_match = re.search(r'<html.*?>(.*?)</html>', response_text, re.DOTALL)
     if html_tag_match:
         return f"<html>{html_tag_match.group(1)}</html>"
     
-    # If neither is found, just return the original text
     return response_text.strip()
 
 ##############################################################################
 # GENERATE INITIAL HTML
 ##############################################################################
 def generate_initial_html(markdown_content, api_key):
-    """Converts markdown content to HTML using the specified AI platform."""
-    print("Converting markdown to HTML...")
-    
+    """Converts markdown to HTML."""
     system_prompt = """You are an expert web developer specializing in converting markdown to clean, semantic HTML.
-Your task is to convert the provided markdown content into valid HTML5 that follows best practices.
+    Your task is to convert the provided markdown content into valid HTML5 that follows best practices.
 
-Instructions:
-1. Convert all markdown syntax to proper HTML5 elements
-2. Ensure all headings (h1-h5) maintain their hierarchy
-3. Apply proper HTML semantics (article, section, etc.) where appropriate
-4. Convert markdown lists to proper HTML lists (ul/ol with li elements)
-5. Convert emphasis and strong formatting to appropriate HTML tags
-6. Format the HTML with proper indentation for readability
-7. Do not add any CSS or JavaScript
-8. Return ONLY the HTML code without any explanation
-"""
+    Instructions:
+    1. Convert all markdown syntax to proper HTML5 elements
+    2. Ensure all headings (h1-h5) maintain their hierarchy
+    3. Apply proper HTML semantics (article, section, etc.) where appropriate
+    4. Convert markdown lists to proper HTML lists (ul/ol with li elements)
+    5. Convert emphasis and strong formatting to appropriate HTML tags
+    6. Format the HTML with proper indentation for readability
+    7. Do not add any CSS or JavaScript
+    8. Return ONLY the HTML code without any explanation
+    """
 
     user_prompt = f"""Please convert this markdown content to clean, semantic HTML5:
 
 {markdown_content}
 
 Return ONLY the HTML code.
-"""
-
-    # Make API call based on platform
+    """
     if platform == "Claude":
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
             model=claude_model,
             max_tokens=4096,
             system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_prompt
-                }
-            ]
+            messages=[{"role": "user", "content": user_prompt}]
         )
         html_content = extract_html_from_response(response.content[0].text)
-    
-    elif platform == "ChatGPT":
+    else:
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model=chatgpt_model,
             messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt
-                },
-                {
-                    "role": "user", 
-                    "content": user_prompt
-                }
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
             ],
             max_tokens=4096
         )
         html_content = extract_html_from_response(response.choices[0].message.content)
     
-    # Save HTML to file
     filename = f"{OUTPUT_DIR}/output.html"
     with open(filename, "w", encoding="utf-8") as f:
         f.write(html_content)
@@ -575,42 +590,21 @@ Return ONLY the HTML code.
 # GENERATE CONTENT
 ##############################################################################
 def generate_content(requirements, claude_api=None, openai_api=None, settings=None):
-    """
-    Generate content based on the requirements. This function combines markdown generation,
-    HTML conversion, and file saving into a single function for the Streamlit app.
-    
-    Args:
-        requirements: Dictionary of SEO requirements
-        claude_api: Optional Claude API key
-        openai_api: Optional OpenAI API key
-        settings: Optional dictionary with model and API settings
-        
-    Returns:
-        Tuple of (markdown_content, html_content, save_path)
-    """
+    """Generates markdown and HTML content."""
     try:
-        # Handle settings dict if provided (from Streamlit app)
         if settings:
             claude_api = settings.get('anthropic_api_key') or claude_api
             openai_api = settings.get('openai_api_key') or openai_api
-            model = settings.get('model') or 'claude'
         
-        # Generate markdown content
         markdown_content = generate_initial_markdown(requirements, claude_api, openai_api)
-        
-        # Convert to HTML
         html_content = ""
         try:
             html_content = generate_initial_html(markdown_content, claude_api)
         except Exception as e:
             print(f"Warning: Could not generate HTML: {e}")
-            # Fallback to simple HTML conversion
-            html_content = f"<h1>{requirements.get('primary_keyword', 'Content')}</h1>\n"
-            html_content += markdown_content.replace("\n", "<br>")
+            html_content = f"<h1>{requirements.get('primary_keyword', 'Content')}</h1>\n" + markdown_content.replace("\n", "<br>")
         
-        # Save markdown to file
         save_path = save_markdown_to_file(markdown_content, requirements.get("primary_keyword", "content"), 1)
-        
         return markdown_content, html_content, save_path
     except Exception as e:
         print(f"Error in generate_content: {e}")
@@ -620,45 +614,32 @@ def generate_content(requirements, claude_api=None, openai_api=None, settings=No
 # MAIN FUNCTION
 ##############################################################################
 def main(claude_api, openai_api):
-    """Main function to orchestrate the markdown generation process."""
+    """Orchestrates the markdown generation process."""
     try:
-        # Create output directory if it doesn't exist
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        
-        # Upload file
         uploaded = upload_file()
         if not uploaded:
             print("No file uploaded. Exiting.")
             return
+        
         file_path = uploaded
+        print("Parsing CORA report...")
+        requirements = parse_cora_report(file_path)
+        print(f"✅ Successfully extracted requirements for {requirements['primary_keyword']}")
+        print(f"Primary Keyword: {requirements['primary_keyword']}")
+        print(f"Word Count Target: {requirements['word_count']}")
+        print(f"Entities Found: {len(requirements['entities'])}")
+        print(f"LSI Keywords Found: {len(requirements['lsi_keywords'])}")
+        print()
         
-        # Parse CORA report
-        try:
-            print("Parsing CORA report...")
-            requirements = parse_cora_report(file_path)
-            print(f"✅ Successfully extracted requirements for {requirements['primary_keyword']}")
-            print(f"Primary Keyword: {requirements['primary_keyword']}")
-            print(f"Word Count Target: {requirements['word_count']}")
-            print(f"Entities Found: {len(requirements['entities'])}")
-            print(f"LSI Keywords Found: {len(requirements['lsi_keywords'])}")
-            print()
-        except Exception as e:
-            print(f"❌ Error parsing CORA report: {e}")
-            return
-
-        # Generate initial markdown
         markdown_content = generate_initial_markdown(requirements, claude_api, openai_api)
-        
-        # Save markdown to file
         save_markdown_to_file(markdown_content, requirements["primary_keyword"], 1)
-        
         return markdown_content
     except Exception as e:
         print(f"Error in main function: {e}")
+        return None
 
 if __name__ == "__main__":
-    # When running directly, API keys would be provided via environment variables or command line
-    import os
     claude_api = os.environ.get("CLAUDE_API_KEY")
     openai_api = os.environ.get("OPENAI_API_KEY")
     main(claude_api, openai_api)
