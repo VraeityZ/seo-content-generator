@@ -72,12 +72,18 @@ def analyze_content(markdown_content, requirements):
         "entities": {}
     }
     
-    words = markdown_content.split()
+    # Remove markdown formatting from content for more accurate word counting
+    # This is a simple approach - for production, consider using a proper markdown parser
+    text_content = re.sub(r'[#*_`~]', ' ', markdown_content)
+    
+    # Use word boundaries to ensure we only count whole words
+    words = re.findall(r'\b\w+\b', text_content.lower())
     analysis["word_count"] = len(words)
     
     primary_keyword = requirements.get("primary_keyword", "").lower()
     if primary_keyword:
-        analysis["primary_keyword_count"] = len(re.findall(rf'\b{re.escape(primary_keyword)}\b', markdown_content.lower()))
+        # Ensure we only count complete keyword matches with word boundaries
+        analysis["primary_keyword_count"] = len(re.findall(rf'\b{re.escape(primary_keyword)}\b', text_content.lower()))
     
     heading_pattern = r"^(#{1,6})\s+(.+)$"
     for line in markdown_content.split("\n"):
@@ -86,13 +92,27 @@ def analyze_content(markdown_content, requirements):
             heading_level = f"H{len(match.group(1))}"
             analysis["heading_structure"][heading_level] += 1
     
+    # Process variations if they exist
+    variations = requirements.get("variations", [])
+    if variations:
+        analysis["variations"] = {}
+        for var in variations:
+            count = len(re.findall(rf'\b{re.escape(var.lower())}\b', text_content.lower()))
+            status = "✅" if count > 0 else "❌"
+            analysis["variations"][var] = {
+                "count": count,
+                "status": status
+            }
+    
+    # Process LSI keywords
     lsi_keywords = requirements.get("lsi_keywords", {})
     if isinstance(lsi_keywords, list):
         lsi_keywords_dict = {kw: 1 for kw in lsi_keywords}
         lsi_keywords = lsi_keywords_dict
 
     for keyword, target_count in lsi_keywords.items():
-        count = len(re.findall(rf'\b{re.escape(keyword.lower())}\b', markdown_content.lower()))
+        # Ensure we only count complete keyword matches with word boundaries
+        count = len(re.findall(rf'\b{re.escape(keyword.lower())}\b', text_content.lower()))
         status = "✅" if count >= target_count else "❌"
         analysis["lsi_keywords"][keyword] = {
             "count": count,
@@ -100,9 +120,11 @@ def analyze_content(markdown_content, requirements):
             "status": status
         }
     
+    # Process entities
     entities = requirements.get("entities", [])
     for entity in entities:
-        count = len(re.findall(rf'\b{re.escape(entity.lower())}\b', markdown_content.lower()))
+        # Ensure we only count complete entity matches with word boundaries
+        count = len(re.findall(rf'\b{re.escape(entity.lower())}\b', text_content.lower()))
         status = "✅" if count > 0 else "❌"
         analysis["entities"][entity] = {
             "count": count,
@@ -335,6 +357,19 @@ def generate_content_flow():
                         col1.metric("Input Tokens", token_usage['input_tokens'], delta=f"${input_cost:.4f}", delta_color="off")
                         col2.metric("Output Tokens", token_usage['output_tokens'], delta=f"${output_cost:.4f}", delta_color="off")
                         col3.metric("Total Tokens", token_usage['total_tokens'], delta=f"${total_cost:.4f}", delta_color="off")
+                        
+                        # Preserve heading generation token usage if it exists
+                        if 'heading_token_usage' in st.session_state:
+                            heading_token_usage = st.session_state['heading_token_usage']
+                            heading_input_cost = (heading_token_usage['input_tokens'] / 1000000) * 3
+                            heading_output_cost = (heading_token_usage['output_tokens'] / 1000000) * 15
+                            heading_total_cost = heading_input_cost + heading_output_cost
+                            
+                            st.sidebar.markdown("### Heading Generation Token Usage")
+                            col1, col2, col3 = st.sidebar.columns(3)
+                            col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
+                            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off")
+                            col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
                     
                     status.update(label="✅ Content generated successfully!", state="complete")
                 print("CONTENT_FLOW: Content saved to session state, forcing rerun")
@@ -592,74 +627,11 @@ if st.session_state.get("step", 1) == 2.5:
     col1, col2 = st.columns(2)
     with col1:
         generate_full_content = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
+
     with col2:
-        if st.button("See Prompt", key="fullprompt", type="secondary", use_container_width=True):
-            primary_keyword = st.session_state.requirements.get('primary_keyword', '[primary keyword]')
-            variations = st.session_state.requirements.get('keyword_variations', [])[:10] if st.session_state.requirements.get('keyword_variations') else []
-            variations_text = ", ".join(variations) if variations else "None"
-            lsi_keywords = st.session_state.requirements.get('lsi_keywords', [])
-            lsi_formatted = ""
-            current_lsi_limit = lsi_limit_input
-            if isinstance(lsi_keywords, dict) and lsi_keywords:
-                top_keywords = list(sorted(lsi_keywords.items(), key=lambda x: x[1], reverse=True)[:current_lsi_limit])
-                for keyword, freq in top_keywords:
-                    lsi_formatted += f"{keyword}, "
-            elif isinstance(lsi_keywords, list) and lsi_keywords:
-                for keyword in lsi_keywords[:current_lsi_limit]:
-                    lsi_formatted += f"{keyword}, "
-            else:
-                lsi_formatted = "No LSI keywords available\n"
-            entities = st.session_state.requirements.get('entities', [])[:100] if st.session_state.requirements.get('entities') else []
-            entities_text = "\n".join([f"- {entity}" for entity in entities])
-            meta_title = st.session_state.meta_and_headings.get("meta_title", "")
-            meta_description = st.session_state.meta_and_headings.get("meta_description", "")
-            heading_structure = st.session_state.meta_and_headings.get("heading_structure", "")
-            word_count = word_count_input
-            prompt_content = f"""
-# SEO Content Writing Task
-    
-Please write a comprehensive, SEO-optimized article about **{primary_keyword}**. 
-    
-1. Meta Information (do not change or add to it):
-- Meta Title: {meta_title}
-- Meta Description: {meta_description}
-    
-2. Key Requirements:
-- Word Count: {word_count} words (minimum)
-- Primary Keyword: {primary_keyword}
-- Use the EXACT following heading structure (do not change or add to it):
-<headings_structure>
-{heading_structure}
-</headings_structure>
-    
-3. Keyword Usage Requirements:
-- Use the primary keyword ({primary_keyword}) in the first 100 words, in at least one H2 heading, and naturally throughout the content.
-- Include these keyword variations naturally: {variations_text}
-    
-4. LSI Keywords to Include (with minimum frequencies):
-{lsi_formatted}
-    
-5. Entities/Topics to Cover:
-{entities_text}
-    
-6. Content Writing Guidelines:
-- 1. Write in a clear, authoritative style suitable for an expert audience
-- 2. Make the content deeply informative and comprehensive
-- 3. Always write in active voice and maintain a conversational but professional tone
-- 4. Include only factually accurate information
-- 5. Ensure the content flows naturally between sections
-- 6. Include the primary keyword in the first 100 words of the content
-- 7. Format the content using markdown
-- 8. DO NOT include any introductory notes, explanations, or meta-commentary about your process
-- 9. DO NOT use placeholder text or suggest that the client should add information
-- 10. DO NOT use the phrases "in conclusion" or "in summary" for the final section
-  
-IMPORTANT: Return ONLY the pure markdown content without any explanations, introductions, or notes about your approach."""
-            show_prompt_modal("Content Generation Prompt", prompt_content)
-    
-    if st.button("Back to Requirements"):
-        st.session_state['step'] = 2
-        st.rerun()
+        if st.button("Back to Requirements"):
+            st.session_state['step'] = 2
+            st.rerun()
 
 if st.session_state.get("step", 1) == 2:
     requirements = st.session_state.requirements
