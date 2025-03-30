@@ -62,31 +62,48 @@ st.markdown("""
 # Utility function to analyze content
 def analyze_content(markdown_content, requirements):
     """Analyze the generated content against the SEO requirements."""
-    # Clean text: remove markdown formatting and punctuation for accurate matching
-    clean_text = markdown_content.lower()
-    clean_text = re.sub(r'[#*_`~]', ' ', clean_text)         # remove markdown symbols
-    clean_text = re.sub(r'<[^>]+>', ' ', clean_text)           # remove HTML tags if any
-    clean_text = re.sub(r'[^\w\s]', ' ', clean_text)           # remove punctuation
-    clean_text = re.sub(r'\s+', ' ', clean_text).strip()       # normalize whitespace
-
+    # First, we need to extract just the text content without markdown formatting
+    # Basic markdown removal
+    text_content = markdown_content.lower()
+    # Remove headers
+    text_content = re.sub(r'^#+\s+.*$', '', text_content, flags=re.MULTILINE)
+    # Remove emphasis and other markdown formatting
+    text_content = re.sub(r'[*_`~]', '', text_content)
+    # Remove HTML tags
+    text_content = re.sub(r'<[^>]+>', '', text_content)
+    # Remove URLs
+    text_content = re.sub(r'https?://\S+', '', text_content)
+    # Replace newlines and punctuation with spaces
+    text_content = re.sub(r'[\n\r.,;:!?()[\]{}"\'-]', ' ', text_content)
+    # Normalize spaces
+    text_content = re.sub(r'\s+', ' ', text_content).strip()
+    
+    # Let's create a token-based approach with explicit word boundary checking
+    # First, split into tokens (words)
+    tokens = text_content.split()
+    
+    # Create a special token lookup with space padding to ensure whole word matching
+    # This is a completely different approach that won't rely on regex word boundaries
+    token_text = ' ' + ' '.join(tokens) + ' '
+    
     analysis = {
         "primary_keyword": requirements.get("primary_keyword", ""),
         "primary_keyword_count": 0,
-        "word_count": 0,
+        "word_count": len(tokens),
         "variations": requirements.get("variations", []),
         "heading_structure": {"H1": 0, "H2": 0, "H3": 0, "H4": 0, "H5": 0, "H6": 0},
         "lsi_keywords": {},
         "entities": {}
     }
     
-    # Count words using the cleaned text
-    words = clean_text.split()
-    analysis["word_count"] = len(words)
-    
-    primary_keyword = requirements.get("primary_keyword", "").lower()
+    # Count primary keyword - padded for exact match
+    primary_keyword = requirements.get("primary_keyword", "").lower().strip()
     if primary_keyword:
-        analysis["primary_keyword_count"] = len(re.findall(rf'\b{re.escape(primary_keyword)}\b', clean_text))
+        # Here's our new approach - exact padded word/phrase match
+        search_term = f" {primary_keyword} "
+        analysis["primary_keyword_count"] = token_text.count(search_term)
     
+    # Extract and count headings
     heading_pattern = r"^(#{1,6})\s+(.+)$"
     for line in markdown_content.split("\n"):
         match = re.match(heading_pattern, line)
@@ -94,25 +111,45 @@ def analyze_content(markdown_content, requirements):
             heading_level = f"H{len(match.group(1))}"
             analysis["heading_structure"][heading_level] += 1
     
-    # Process variations if they exist
+    # Process variations with our new exact matching approach
     variations = requirements.get("variations", [])
     if variations:
         analysis["variations"] = {}
         for var in variations:
-            count = len(re.findall(rf'\b{re.escape(var.lower())}\b', clean_text))
+            var_lower = var.lower().strip()
+            # Pad with spaces to ensure it's a complete word/phrase match
+            search_term = f" {var_lower} "
+            count = token_text.count(search_term)
+            
+            # Handle special case for variation at start or end of text
+            if token_text.startswith(var_lower + ' '):
+                count += 1
+            if token_text.endswith(' ' + var_lower):
+                count += 1
+                
             status = "✅" if count > 0 else "❌"
             analysis["variations"][var] = {
                 "count": count,
                 "status": status
             }
     
-    # Process LSI keywords
+    # Process LSI keywords with exact matching approach
     lsi_keywords = requirements.get("lsi_keywords", {})
     if isinstance(lsi_keywords, list):
         lsi_keywords = {kw: 1 for kw in lsi_keywords}
 
     for keyword, target_count in lsi_keywords.items():
-        count = len(re.findall(rf'\b{re.escape(keyword.lower())}\b', clean_text))
+        keyword_lower = keyword.lower().strip()
+        # Exact match with space padding
+        search_term = f" {keyword_lower} "
+        count = token_text.count(search_term)
+        
+        # Handle special case for keyword at start or end of text
+        if token_text.startswith(keyword_lower + ' '):
+            count += 1
+        if token_text.endswith(' ' + keyword_lower):
+            count += 1
+            
         status = "✅" if count >= target_count else "❌"
         analysis["lsi_keywords"][keyword] = {
             "count": count,
@@ -120,10 +157,20 @@ def analyze_content(markdown_content, requirements):
             "status": status
         }
     
-    # Process entities
+    # Process entities with exact matching approach
     entities = requirements.get("entities", [])
     for entity in entities:
-        count = len(re.findall(rf'\b{re.escape(entity.lower())}\b', clean_text))
+        entity_lower = entity.lower().strip()
+        # Exact match with space padding
+        search_term = f" {entity_lower} "
+        count = token_text.count(search_term)
+        
+        # Handle special case for entity at start or end of text
+        if token_text.startswith(entity_lower + ' '):
+            count += 1
+        if token_text.endswith(' ' + entity_lower):
+            count += 1
+            
         status = "✅" if count > 0 else "❌"
         analysis["entities"][entity] = {
             "count": count,
@@ -254,6 +301,45 @@ with st.sidebar:
     
     if not anthropic_api_key:
         st.warning("Please enter your Anthropic API key to use this app.")
+    
+    if 'content_token_usage' in st.session_state or 'heading_token_usage' in st.session_state:
+        # Display heading token usage if available
+        heading_total_cost = 0
+        if 'heading_token_usage' in st.session_state:
+            heading_token_usage = st.session_state['heading_token_usage']
+            heading_input_cost = (heading_token_usage['input_tokens'] / 1000000) * 3
+            heading_output_cost = (heading_token_usage['output_tokens'] / 1000000) * 15
+            heading_total_cost = heading_input_cost + heading_output_cost
+            
+            st.sidebar.markdown("### Heading Generation Token Usage")
+            col1, col2, col3 = st.sidebar.columns(3)
+            col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
+            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off")
+            col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
+        
+        # Display content token usage if available
+        if 'content_token_usage' in st.session_state:
+            token_usage = st.session_state['content_token_usage']
+            input_cost = (token_usage['input_tokens'] / 1000000) * 3
+            output_cost = (token_usage['output_tokens'] / 1000000) * 15
+            total_cost = input_cost + output_cost
+            
+            st.sidebar.markdown("### Content Generation Token Usage")
+            col1, col2, col3 = st.sidebar.columns(3)
+            col1.metric("Input Tokens", token_usage['input_tokens'], delta=f"${input_cost:.4f}", delta_color="off")
+            col2.metric("Output Tokens", token_usage['output_tokens'], delta=f"${output_cost:.4f}", delta_color="off")
+            col3.metric("Total Tokens", token_usage['total_tokens'], delta=f"${total_cost:.4f}", delta_color="off")
+        
+        # Display combined cost if both tokens are available
+        if 'content_token_usage' in st.session_state and 'heading_token_usage' in st.session_state:
+            content_token_usage = st.session_state['content_token_usage']
+            content_input_cost = (content_token_usage['input_tokens'] / 1000000) * 3
+            content_output_cost = (content_token_usage['output_tokens'] / 1000000) * 15
+            content_total_cost = content_input_cost + content_output_cost
+            
+            combined_total_cost = content_total_cost + heading_total_cost
+            st.sidebar.markdown("### Combined Total Cost")
+            st.sidebar.metric("Total Article Cost", f"${combined_total_cost:.4f}")
 
 # File upload section
 uploaded_file = st.file_uploader("Upload CORA report", type=["xlsx", "xls"])
@@ -377,39 +463,6 @@ def generate_content_flow():
                     
                     st.session_state['save_path'] = save_path
                     
-                    if token_usage:
-                        input_cost = (token_usage['input_tokens'] / 1000000) * 3
-                        output_cost = (token_usage['output_tokens'] / 1000000) * 15
-                        total_cost = input_cost + output_cost
-                        
-                        # Save content token usage to session state for persistence
-                        st.session_state['content_token_usage'] = token_usage
-                        
-                        st.sidebar.markdown("### Content Generation Token Usage")
-                        col1, col2, col3 = st.sidebar.columns(3)
-                        col1.metric("Input Tokens", token_usage['input_tokens'], delta=f"${input_cost:.4f}", delta_color="off")
-                        col2.metric("Output Tokens", token_usage['output_tokens'], delta=f"${output_cost:.4f}", delta_color="off")
-                        col3.metric("Total Tokens", token_usage['total_tokens'], delta=f"${total_cost:.4f}", delta_color="off")
-                        
-                        # Preserve heading generation token usage if it exists
-                        heading_total_cost = 0
-                        if 'heading_token_usage' in st.session_state:
-                            heading_token_usage = st.session_state['heading_token_usage']
-                            heading_input_cost = (heading_token_usage['input_tokens'] / 1000000) * 3
-                            heading_output_cost = (heading_token_usage['output_tokens'] / 1000000) * 15
-                            heading_total_cost = heading_input_cost + heading_output_cost
-                            
-                            st.sidebar.markdown("### Heading Generation Token Usage")
-                            col1, col2, col3 = st.sidebar.columns(3)
-                            col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
-                            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off")
-                            col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
-                        
-                        # Display combined total cost
-                        combined_total_cost = total_cost + heading_total_cost
-                        st.sidebar.markdown("### Combined Total Cost")
-                        st.sidebar.metric("Total Article Cost", f"${combined_total_cost:.4f}")
-                    
                     status.update(label="✅ Content generated successfully!", state="complete")
                 print("CONTENT_FLOW: Content saved to session state, forcing rerun")
                 st.rerun()
@@ -459,7 +512,6 @@ def generate_content_flow():
             </style>
             """, unsafe_allow_html=True)
             html_with_styles = f'<div class="content-preview">{st.session_state["generated_html"]}</div>'
-            print(html_with_styles)
             st.html(html_with_styles)
         
         with tab2:
@@ -500,44 +552,83 @@ def generate_content_flow():
                     lsi_density = (total_lsi / analysis['word_count']) * 100 if analysis['word_count'] > 0 else 0
                     st.write(f"*LSI Keyword Density:* {lsi_density:.2f}%")
                     lsi_data = [{'Keyword': k, 'Count': info['count']} for k, info in analysis['lsi_keywords'].items()]
-                    st.dataframe(pd.DataFrame(lsi_data), use_container_width=True, height=300)
+                    lsi_df = pd.DataFrame(lsi_data).sort_values(by='Count', ascending=False).reset_index(drop=True)
+                    st.dataframe(lsi_df, use_container_width=True, height=300)
                 
                 if analysis.get('variations'):
                     st.write("**Variation Usage:**")
                     variations = analysis['variations']
-                    content_lower = html_content.lower()
-                    variations_count = {v: content_lower.count(v.lower()) for v in variations}
+                    variations_count = {v: analysis['variations'][v]['count'] for v in variations}
                     total_variations = sum(variations_count.values())
                     st.write(f"*Variation Count:* {total_variations}")
                     var_density = (total_variations / analysis['word_count']) * 100 if analysis['word_count'] > 0 else 0
                     st.write(f"*Variation Density:* {var_density:.2f}%")
                     var_data = [{'Variation': v, 'Count': cnt} for v, cnt in variations_count.items()]
-                    st.dataframe(pd.DataFrame(var_data), use_container_width=True, height=300)
+                    var_df = pd.DataFrame(var_data).sort_values(by='Count', ascending=False).reset_index(drop=True)
+                    st.dataframe(var_df, use_container_width=True, height=300)
                 
                 if analysis.get('entities'):
                     st.write("**Entity Usage:**")
                     entities = analysis['entities']
-                    if isinstance(entities, dict):
-                        entities_count = {ent: int(val.get('count', 0)) for ent, val in entities.items()}
-                    elif isinstance(entities, list):
-                        entities_count = dict(Counter(entities))
-                    else:
-                        entities_count = {}
+                    entities_count = {ent: info['count'] for ent, info in entities.items()}
                     total_entities = sum(entities_count.values())
                     st.write(f"*Entity Count:* {total_entities}")
                     ent_density = (total_entities / analysis['word_count']) * 100 if analysis['word_count'] > 0 else 0
                     st.write(f"*Entity Density:* {ent_density:.2f}%")
                     ent_data = [{'Entity': ent, 'Count': cnt} for ent, cnt in entities_count.items()]
-                    st.dataframe(pd.DataFrame(ent_data), use_container_width=True, height=300)
+                    ent_df = pd.DataFrame(ent_data).sort_values(by='Count', ascending=False).reset_index(drop=True)
+                    st.dataframe(ent_df, use_container_width=True, height=300)
                 
-                overall_count = (
-                    sum(info['count'] for info in analysis.get('lsi_keywords', {}).values()) +
-                    sum(variations_count.values() if analysis.get('variations') else 0) +
-                    total_entities
-                )
-                overall_density = (overall_count / analysis['word_count']) * 100 if analysis['word_count'] > 0 else 0
-                st.write(f"**Total Keyword Count:** {overall_count}")
-                st.write(f"**Total Density:** {overall_density:.2f}%")
+                # Calculate overall keyword usage with deduplication
+                if any([analysis.get('lsi_keywords'), analysis.get('variations'), analysis.get('entities')]):
+                    st.write("**Overall Keyword Usage (Deduplicated):**")
+                    
+                    # Collect all keywords and their counts
+                    all_keywords = {}
+                    
+                    # Add primary keyword if it exists
+                    if 'primary_keyword_count' in analysis and analysis.get('primary_keyword'):
+                        primary_kw = analysis.get('primary_keyword', '').lower()
+                        if primary_kw:
+                            all_keywords[primary_kw] = analysis['primary_keyword_count']
+                    
+                    # Add LSI keywords
+                    for k, info in analysis.get('lsi_keywords', {}).items():
+                        k_lower = k.lower()
+                        if k_lower in all_keywords:
+                            all_keywords[k_lower] = max(all_keywords[k_lower], info['count'])
+                        else:
+                            all_keywords[k_lower] = info['count']
+                    
+                    # Add variations
+                    for v, info in analysis.get('variations', {}).items():
+                        v_lower = v.lower()
+                        if v_lower in all_keywords:
+                            all_keywords[v_lower] = max(all_keywords[v_lower], info['count'])
+                        else:
+                            all_keywords[v_lower] = info['count']
+                    
+                    # Add entities
+                    for e, info in analysis.get('entities', {}).items():
+                        e_lower = e.lower()
+                        if e_lower in all_keywords:
+                            all_keywords[e_lower] = max(all_keywords[e_lower], info['count'])
+                        else:
+                            all_keywords[e_lower] = info['count']
+                    
+                    # Calculate deduplicated totals
+                    deduplicated_total = sum(all_keywords.values())
+                    deduplicated_density = (deduplicated_total / analysis['word_count']) * 100 if analysis['word_count'] > 0 else 0
+                    
+                    st.write(f"*Total Unique Keywords:* {len(all_keywords)}")
+                    st.write(f"*Total Keyword Instances (Deduplicated):* {deduplicated_total}")
+                    st.write(f"*Overall Keyword Density (Deduplicated):* {deduplicated_density:.2f}%")
+                    
+                    # Create a dataframe with all unique keywords
+                    all_keywords_data = [{'Keyword': k, 'Count': cnt} for k, cnt in all_keywords.items()]
+                    all_keywords_df = pd.DataFrame(all_keywords_data).sort_values(by='Count', ascending=False).reset_index(drop=True)
+                    st.dataframe(all_keywords_df, use_container_width=True, height=300)
+
         
         if st.button("Regenerate Content"):
             del st.session_state['generated_markdown']
@@ -652,11 +743,15 @@ if st.session_state.get("step", 1) == 2.5:
         if 'generated_html' in st.session_state:
             print("Clearing existing generated_html from session state")
             del st.session_state['generated_html']
-        
+
         if 'requirements' in st.session_state:
-            print(f"Updating word_count to {st.session_state.get('word_count_input', 1250)} and lsi_limit to {st.session_state.get('lsi_limit_input', 20)}")
-            st.session_state.requirements['word_count'] = st.session_state.get('word_count_input', 1250)
-            st.session_state.requirements['lsi_limit'] = st.session_state.get('lsi_limit_input', 20)
+            # Get the word count from the input field, which should be initialized from CORA
+            word_count = st.session_state.get('word_count_input', st.session_state.requirements.get('word_count', 1500))
+            lsi_limit = st.session_state.get('lsi_limit_input', 20)
+            
+            print(f"Updating word_count to {word_count} and lsi_limit to {lsi_limit}")
+            st.session_state.requirements['word_count'] = word_count
+            st.session_state.requirements['lsi_limit'] = lsi_limit
         
         print("SETTING auto_generate_content to True to force API call")
         st.session_state['auto_generate_content'] = True
@@ -666,7 +761,7 @@ if st.session_state.get("step", 1) == 2.5:
     
     col1, col2 = st.columns(2)
     with col1:
-        generate_full_content = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
+        generate_button = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
 
     with col2:
         if st.button("Back to Requirements"):
@@ -722,7 +817,7 @@ if st.session_state.get("step", 1) == 2:
     col1, col2 = st.columns(2)
     with col1:
         generate_button = st.button("Generate Meta Title, Description and Headings", use_container_width=True)
-    
+
     if generate_button:
         if not st.session_state.get('anthropic_api_key', ''):
             st.error("Please enter your Anthropic API key in the sidebar.")
@@ -818,7 +913,7 @@ if st.session_state.get("step", 1) == 3:
             print("FORCING REMOVAL of generated_html in step 3 initialization")
             del st.session_state['generated_html']
 
-    st.session_state.configured_settings = {"word_count": st.session_state.requirements.get("word_count", 1500)}
+    st.session_state.configured_settings = {"word_count": st.session_state.get("word_count_input", st.session_state.requirements.get("word_count", 1500))}
     
     render_extracted_data()
     
