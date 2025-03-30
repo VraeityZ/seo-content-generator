@@ -590,7 +590,7 @@ if st.session_state.get("step", 1) == 2.5:
     
     col1, col2 = st.columns(2)
     with col1:
-        generate_full_content = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
+        generate_button = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
     with col2:
         if st.button("See Prompt", key="fullprompt", type="secondary", use_container_width=True):
             primary_keyword = st.session_state.requirements.get('primary_keyword', '[primary keyword]')
@@ -655,6 +655,10 @@ Please write a comprehensive, SEO-optimized article about **{primary_keyword}**.
   
 IMPORTANT: Return ONLY the pure markdown content without any explanations, introductions, or notes about your approach."""
             show_prompt_modal("Content Generation Prompt", prompt_content)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        generate_button = st.button("Generate Content", use_container_width=True)
     
     if generate_button:
         if not st.session_state.get('anthropic_api_key', ''):
@@ -730,96 +734,6 @@ if st.session_state.get("step", 1) == 2:
     col1, col2 = st.columns(2)
     with col1:
         generate_button = st.button("Generate Meta Title, Description and Headings", use_container_width=True)
-    with col2:
-        if st.button("See Prompt", key="fullprompt", type="secondary", use_container_width=True):
-            primary_keyword = st.session_state.requirements.get('primary_keyword', '[primary keyword]')
-            # Add this line to define variations:
-            variations = st.session_state.requirements.get('variations', [])
-            word_count = st.session_state.requirements.get('word_count', 1500)
-
-            meta_title_length = st.session_state.requirements.get('requirements', {}).get('CP480', 60)
-            meta_desc_length = st.session_state.requirements.get('requirements', {}).get('CP380', 160)
-
-            lsi_keywords = st.session_state.requirements.get('lsi_keywords', [])
-            lsi_formatted = ""
-            if isinstance(lsi_keywords, dict) and lsi_keywords:
-                for keyword in list(lsi_keywords.keys())[:20]:
-                    lsi_formatted += f"{keyword}, "
-            elif isinstance(lsi_keywords, list) and lsi_keywords:
-                for keyword in lsi_keywords[:20]:
-                    lsi_formatted += f"{keyword}, "
-            else:
-                lsi_formatted = "No LSI keywords available\n"
-                    
-            entities = st.session_state.requirements.get('entities', [])[:20] if st.session_state.requirements.get('entities') else []
-            entities_text = "\n".join([f"- {entity}" for entity in entities])
-                    
-            heading_structure = st.session_state.configured_headings if 'configured_headings' in st.session_state else {"h2": 4, "h3": 8, "h4": 0, "h5": 0, "h6": 0}
-                
-            prompt_content = f"""Please create a meta title, meta description, and heading structure for an article about "{primary_keyword}".
-
-<requirements>
-- Primary Keyword: {primary_keyword}
-- Variations to consider: {', '.join(variations)}
-- LSI Keywords to Include: {lsi_formatted}
-- Entities to Include: {', '.join(entities)}
-</requirements>
-
-<step 1>
-Using the information and requirements provided tackle the SEO-optimized content. First, establish the key elements required:
-- Title Tag:
-- Meta Description:
-- Headings Tags:
-Please follow these guidelines for content structure:
-1. Title: Include at least one instance of the main keyword and should be within {meta_title_length} characters.
-2. Meta Description: {meta_desc_length} characters or close to that length.
-3. Avoid Redundancy
-3A. Definition: Prevent the repetition of identical factual information, phrasing, or ideas across different sections unless necessary for context or emphasis.
-3B. Guidelines:
-3B1. Each section should introduce new information or a fresh perspective.
-3B2. Avoid reusing the same sentences or key points under different headings.
-3B3. If overlap occurs, merge sections or reframe the content to add distinct value.
-3C. Example:
-3C1. Redundant: Two sections both state, '[Topic] is beneficial.'
-3C2. Fixed: One section defines '[Topic]', while another explains another aspect of '[Topic]'.
-4. Include an FAQ if the topic involves common user questions or multiple subtopics. FAQ Section should be an H2. The Questions must each be an H3.
-5. Merge variations into single headings when possible (as long as it makes sense for readability, SEO and adheres with the heading requirements).
-6. IMPORTANT: Ensure and Confirm each step in the Step 1 list is met.
-</step 1>
-
-<step 2>
-1. Create a heading structure with the following requirements. No Less. It can be More ONLY if absolutely necessary, otherwise no more than:
-   - H1: Contains the primary keyword
-   - H2: {heading_structure.get("h2", 0)} headings
-   - H3: {heading_structure.get("h3", 0)} headings
-   - H4: {heading_structure.get("h4", 0)} headings
-   - H5: {heading_structure.get("h5", 0)} headings
-   - H6: {heading_structure.get("h6", 0)} headings
-
-2. The headings should:
-   - Contain the primary keyword and/or variations where appropriate
-   - Include some LSI keywords where relevant
-   - Form a logical content flow
-   - Be engaging and click-worthy while still being informative
-   - Be formatted in Markdown (# for H1, ## for H2, etc.)
-2. Confirm all the requirements are being met in the headings.
-3. Confirm all the requirements are being met in the title.
-4. Confirm all the requirements are being met in the description.
-5.IMPORTANT: Ensure and Confirm each step in the Step 1 list is met.
-</step 2>
-
-Format your response exactly like this:
-META TITLE: [Your meta title here]
-META DESCRIPTION: [Your meta description here]
-HEADING STRUCTURE:
-[Complete markdown user journey friendly heading structure with # for H1, ## for H2, etc. Provided in order of the exact page layout eg.
-# Heading 1
-## Heading 2
-### Heading 3
-### Heading 3
-## Heading 2
-etc.]"""
-            show_prompt_modal("Heading Generation Prompt", prompt_content)
     
     if generate_button:
         if not st.session_state.get('anthropic_api_key', ''):
@@ -931,7 +845,8 @@ def create_download_zip():
     
     roadmap_reqs = requirements.get("requirements", {})
     filtered_reqs = {k: v for k, v in roadmap_reqs.items() 
-                     if not k.startswith("Number of H") and k != "Number of heading tags"}
+                     if not k.startswith("Number of H") and k != "Number of heading tags" and k not in ["CP480", "CP380"]
+    }
     if filtered_reqs:
         roadmap_str = "\n".join([f"{k}: {v}" for k, v in filtered_reqs.items()])
     else:
