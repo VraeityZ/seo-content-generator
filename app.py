@@ -329,8 +329,38 @@ def generate_content_flow():
                     markdown_content = result.get('markdown', '')
                     html_content = result.get('html', '')
                     save_path = result.get('filename', '')
-                    token_usage = result.get('token_usage', {})
-                    
+                    # Try to get token usage from the API result; if empty, fallback to previously stored value
+                    token_usage = result.get('token_usage', {}) or st.session_state.get('content_token_usage', {})
+                    if token_usage:
+                        input_cost = (token_usage['input_tokens'] / 1000000) * 3
+                        output_cost = (token_usage['output_tokens'] / 1000000) * 15
+                        total_cost = input_cost + output_cost
+                        
+                        st.session_state['content_token_usage'] = token_usage
+                        
+                        st.sidebar.markdown("### Content Generation Token Usage")
+                        col1, col2, col3 = st.sidebar.columns(3)
+                        col1.metric("Input Tokens", token_usage['input_tokens'], delta=f"${input_cost:.4f}", delta_color="off")
+                        col2.metric("Output Tokens", token_usage['output_tokens'], delta=f"${output_cost:.4f}", delta_color="off")
+                        col3.metric("Total Tokens", token_usage['total_tokens'], delta=f"${total_cost:.4f}", delta_color="off")
+                        
+                        # Also display heading cost if available
+                        heading_total_cost = 0
+                        if 'heading_token_usage' in st.session_state:
+                            heading_token_usage = st.session_state['heading_token_usage']
+                            heading_input_cost = (heading_token_usage['input_tokens'] / 1000000) * 3
+                            heading_output_cost = (heading_token_usage['output_tokens'] / 1000000) * 15
+                            heading_total_cost = heading_input_cost + heading_output_cost
+                            
+                            st.sidebar.markdown("### Heading Generation Token Usage")
+                            col1, col2, col3 = st.sidebar.columns(3)
+                            col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
+                            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off")
+                            col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
+                        
+                        combined_total_cost = total_cost + heading_total_cost
+                        st.sidebar.markdown("### Combined Total Cost")
+                        st.sidebar.metric("Total Article Cost", f"${combined_total_cost:.4f}")
                     print(f"CONTENT_FLOW: Content generated successfully, length: {len(markdown_content)}")
                     
                     st.session_state['generated_markdown'] = markdown_content
