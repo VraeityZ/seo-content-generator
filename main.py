@@ -8,12 +8,12 @@ import warnings
 import openpyxl
 import math
 import logging
-import re
+
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl.styles.stylesheet")
 
 # Define output directory
-OUTPUT_DIR = "output_markdown"
+OUTPUT_DIR = "output"
 
 # Placeholder for API keys - these should be set in environment variables or Streamlit secrets
 def get_api_keys(claude_api, openai_api):
@@ -76,6 +76,9 @@ def parse_cora_report(file_path):
             "headings_section": None
         }
         
+        # Extract requirements from CORA report
+        requirements = {}
+        
         # Parse "Roadmap" sheet
         if "Roadmap" in wb.sheetnames:
             roadmap_sheet = wb["Roadmap"]
@@ -131,6 +134,18 @@ def parse_cora_report(file_path):
                         except (ValueError, TypeError):
                             logging.warning(f"Could not parse requirement amount: {req_amount_text}")
                             continue
+        
+        # Initialize heading variables before Basic Tunings processing
+        heading_2 = 0
+        heading_3 = 0
+        heading_4 = 0
+        heading_5 = 0
+        heading_6 = 0
+        total_heading = 0
+        
+        # Initialize title and description length variables
+        title_length = 60  # Default value for CP480
+        desc_length = 160  # Default value for CP380
         
         # Parse "Basic Tunings" sheet
         if "Basic Tunings" in wb.sheetnames:
@@ -197,7 +212,13 @@ def parse_cora_report(file_path):
                         except ValueError:
                             pass
                     break   
-        # Number of heading tags
+            requirements["Number of H2 tags"] = heading_2
+            requirements["Number of H3 tags"] = heading_3
+            requirements["Number of H4 tags"] = heading_4
+            requirements["Number of H5 tags"] = heading_5
+            requirements["Number of H6 tags"] = heading_6
+            
+            # Number of heading tags
             for row in range(1, basic_tunings_sheet.max_row + 1):
                 if basic_tunings_sheet.cell(row=row, column=2).value == "CPXR003":
                     total_heading_value = basic_tunings_sheet.cell(row=row, column=5).value
@@ -207,12 +228,30 @@ def parse_cora_report(file_path):
                         except ValueError:
                             pass
                     break   
-            requirements["Number of H2 tags"] = heading_2
-            requirements["Number of H3 tags"] = heading_3
-            requirements["Number of H4 tags"] = heading_4
-            requirements["Number of H5 tags"] = heading_5
-            requirements["Number of H6 tags"] = heading_6
+            
             requirements["Number of heading tags"] = total_heading
+
+            # Extract CP480 (ideal title length) and CP380 (ideal meta description length)
+            for row in range(1, basic_tunings_sheet.max_row + 1):
+                cell_value = basic_tunings_sheet.cell(row=row, column=2).value
+                if cell_value == "CP480":  # Meta title length
+                    title_length_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if title_length_value:
+                        try:
+                            title_length = int(title_length_value)
+                        except ValueError:
+                            pass
+                elif cell_value == "CP380":  # Meta description length
+                    desc_length_value = basic_tunings_sheet.cell(row=row, column=5).value
+                    if desc_length_value:
+                        try:
+                            desc_length = int(desc_length_value)
+                        except ValueError:
+                            pass
+            
+            # Store CP480 and CP380 values in requirements
+            requirements["CP480"] = title_length
+            requirements["CP380"] = desc_length
 
         # Parse "LSI Keywords" sheet
         lsi_sheet_name = next((s for s in wb.sheetnames if "LSI" in s and "Keywords" in s), None)
@@ -280,8 +319,7 @@ def parse_cora_report(file_path):
                     break   
             requirements["Number of Heading Tags"] = total_heading
 
-        
-        # Compile results
+                # Compile results
         results = {
             "primary_keyword": primary_keyword,
             "variations": variations,
@@ -313,12 +351,28 @@ def parse_cora_report(file_path):
             "debug_info": {"error": str(e)}
         }
 
-def call_claude_api(system_prompt, user_prompt, api_key):
+def call_claude_api(system_prompt, user_prompt, api_key, is_content_generation=False):
     """Call the Claude API with the given prompts."""
     client = anthropic.Anthropic(api_key=api_key)
+    
+    # Use different token budgets based on the type of generation
+    max_tokens = 15000 if is_content_generation else 4000
+    thinking_budget = 14000 if is_content_generation else 3500
+    
+    # Print debug information
+    print(f"Calling Claude API:")
+    print(f"Mode: {'Content Generation' if is_content_generation else 'Heading Generation'}")
+    print(f"Max Tokens: {max_tokens}")
+    print(f"Thinking Budget: {thinking_budget}")
+    print(f"API Key: {api_key[:5]}...")
+    
+    # Verify prompt
+    if len(user_prompt) < 50:
+        print("WARNING: User prompt seems too short, might not be valid")
+    
     response = client.messages.create(
         model="claude-3-7-sonnet-latest",
-        max_tokens=15000,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=[
             {
@@ -333,10 +387,27 @@ def call_claude_api(system_prompt, user_prompt, api_key):
         ],
         thinking={
             "type": "enabled",
-            "budget_tokens": 14750
+            "budget_tokens": thinking_budget
         }
     )
-    return response.content[0].text
+    # Extract content text correctly based on response structure
+    # Look for the actual content, not thinking blocks
+    content_text = ""
+    for content_block in response.content:
+        if hasattr(content_block, 'text'):
+            content_text = content_block.text
+            break
+        elif isinstance(content_block, dict) and 'text' in content_block:
+            content_text = content_block['text']
+            break
+    
+    # Return both the response text and token usage information
+    usage = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+        "total_tokens": response.usage.input_tokens + response.usage.output_tokens
+    }
+    return content_text, usage
 
 ##############################################################################
 # GENERATE META AND HEADINGS
@@ -368,24 +439,61 @@ def generate_meta_and_headings(requirements, settings=None):
         "h6": requirements.get("requirements", {}).get("Number of H6 tags", 0)
     }
     
-    # Limit LSI keywords to top 10 for prompt
-    top_lsi_keywords = sorted(lsi_dict.items(), key=lambda x: x[1], reverse=True)[:10]
-    lsi_formatted = "\n".join([f"'{kw}' => at least {freq} occurrences" for kw, freq in top_lsi_keywords])
+    # Get meta title and description length requirements if available
+    # Use standard SEO recommended lengths as defaults
+    meta_title_length = 60  # Recommended length for meta titles (in characters)
+    meta_desc_length = 160  # Recommended length for meta descriptions (in characters)
+    
+    # Check if specific length requirements are provided - try multiple potential keys
+    title_keys = ["title_length", "Title Length", "META TITLE LENGTH", "CP480"]
+    desc_keys = ["description_length", "Description Length", "META DESCRIPTION LENGTH", "CP380"]
+    
+    # Try to find title length in requirements
+    for key in title_keys:
+        title_length_req = requirements.get("requirements", {}).get(key)
+        if title_length_req:
+            meta_title_length = title_length_req
+            break
+    
+    # Try to find description length in requirements
+    for key in desc_keys:
+        desc_length_req = requirements.get("requirements", {}).get(key)
+        if desc_length_req:
+            meta_desc_length = desc_length_req
+            break
+    
+    # Get LSI limit from requirements (default 100)
+    lsi_limit = requirements.get('lsi_limit', 100)
+    
+    # Limit LSI keywords to top N for prompts
+    if isinstance(lsi_dict, dict) and lsi_dict:
+        top_lsi_keywords = sorted(lsi_dict.items(), key=lambda x: x[1], reverse=True)[:min(10, len(lsi_dict))]
+        top_limit_lsi_keywords = sorted(lsi_dict.items(), key=lambda x: x[1], reverse=True)[:min(lsi_limit, len(lsi_dict))]
+        lsi_formatted = "\n".join([f"- '{kw}' => at least {freq} occurrences" for kw, freq in top_lsi_keywords])
+        lsi_formatted_full = "\n".join([f"- '{kw}' => at least {freq} occurrences" for kw, freq in top_limit_lsi_keywords])
+    elif isinstance(lsi_dict, list) and lsi_dict:
+        # Convert list to dict with frequency 1
+        lsi_dict_converted = {kw: 1 for kw in lsi_dict}
+        top_lsi_keywords = list(lsi_dict_converted.items())[:min(10, len(lsi_dict))]
+        top_limit_lsi_keywords = list(lsi_dict_converted.items())[:min(lsi_limit, len(lsi_dict))]
+        lsi_formatted = "\n".join([f"- '{kw}' => at least {freq} occurrences" for kw, freq in top_lsi_keywords])
+        lsi_formatted_full = "\n".join([f"- '{kw}' => at least {freq} occurrences" for kw, freq in top_limit_lsi_keywords])
+    else:
+        lsi_formatted = "- No LSI keywords available\n"
+        lsi_formatted_full = "- No LSI keywords available\n"
     
     # Prepare the system and user prompts
     system_prompt = """
-You are a professional SEO content strategist and copywriter. Your job is to create optimized content strategies that rank well in search engines.
+You are a professional SEO content strategist and copywriter. Your job is to create optimized content strategies that rank well in search engines. Right now your task is to first generate a user friendly page structure utilizing the headings as specified and required by the user.
     """
     
-    user_prompt = f"""
+    user_prompt_heading = f"""
 Please create a meta title, meta description, and heading structure for a piece of content about "{primary_keyword}".
 
 <requirements>
 - Primary Keyword: {primary_keyword}
 - Variations to consider: {', '.join(variations[:5])}
-- Word Count Target: {word_count} words
-- LSI Keywords to Include:
-{top_lsi_keywords}
+- LSI Keywords to Include:{lsi_formatted}
 - Entities to Include: {', '.join(entities[:10])}
 </requirements>
 
@@ -395,8 +503,8 @@ Using the information and requirements provided tackle the SEO-optimized content
 - Meta Description:
 - Headings Tags:
 Please follow these guidelines for content structure:
-1. Title: Include at least one instance of the main keyword and should be within 80 characters unless the requirements state otherwise.
-2. Meta Description: 150 to 160 characters unless the requirements state otherwise.
+1. Title: Include at least one instance of the main keyword and should be within {meta_title_length} characters.
+2. Meta Description: {meta_desc_length} characters or close to that length.
 3. Avoid Redundancy
 3A. Definition: Prevent the repetition of identical factual information, phrasing, or ideas across different sections unless necessary for context or emphasis.
 3B. Guidelines:
@@ -412,7 +520,7 @@ Please follow these guidelines for content structure:
 </step 1>
 
 <step 2>
-1. Create a heading structure with the following requirements:
+1. Create a heading structure with the following requirements. No Less. It can be More ONLY if absolutely necessary, otherwise no more than:
    - H1: Contains the primary keyword
    - H2: {heading_structure.get("h2", 0)} headings
    - H3: {heading_structure.get("h3", 0)} headings
@@ -436,16 +544,26 @@ Format your response exactly like this:
 META TITLE: [Your meta title here]
 META DESCRIPTION: [Your meta description here]
 HEADING STRUCTURE:
-[Complete markdown heading structure with # for H1, ## for H2, etc.]
-"""
+[Complete markdown user journey friendly heading structure with # for H1, ## for H2, etc. Provided in order of the exact page layout eg.
+# Heading 1
+## Heading 2
+### Heading 3
+### Heading 3
+## Heading 2
+etc.]"""
     
     # Save the prompt to a file for reference
     with open("heading_prompt.txt", "w") as f:
-        f.write(f"System Prompt:\n{system_prompt}\n\n\nUser Prompt:{user_prompt}")
+        f.write(f"System Prompt:\n{system_prompt}\n\n\nUser Prompt:{user_prompt_heading}")
+    
+    # Print debug information
+    print(f"Meta Title Length Used: {meta_title_length}")
+    print(f"Meta Description Length Used: {meta_desc_length}")
+    print(f"Heading Structure: {heading_structure}")
     
     # Make the API call
     if model == 'claude':
-        result = call_claude_api(system_prompt, user_prompt, anthropic_api_key)
+        result, token_usage = call_claude_api(system_prompt, user_prompt_heading, anthropic_api_key, is_content_generation=False)
     else:
         raise ValueError(f"Unsupported model: {model}")
     
@@ -467,7 +585,7 @@ HEADING STRUCTURE:
         "meta_title": meta_title,
         "meta_description": meta_description,
         "heading_structure": heading_structure,
-        "raw_response": result
+        "token_usage": token_usage
     }
 
 def generate_content_from_headings(requirements, heading_structure, settings=None):
@@ -475,80 +593,125 @@ def generate_content_from_headings(requirements, heading_structure, settings=Non
     if settings is None:
         settings = {}
     
+    # Print debug info about inputs
+    print(f"Content Generation Starting:")
+    print(f"API Key Available: {'Yes' if settings.get('anthropic_api_key') else 'No'}")
+    print(f"Word Count Requested: {requirements.get('word_count', 'Not specified')}")
+    print(f"LSI Limit: {requirements.get('lsi_limit', 'Not specified')}")
+    print(f"Heading Structure Length: {len(heading_structure) if heading_structure else 0} chars")
+    
     primary_keyword = requirements.get('primary_keyword', '')
     variations = requirements.get('variations', [])
     lsi_dict = requirements.get('lsi_keywords', {})
     entities = requirements.get('entities', [])
     word_count = requirements.get('word_count', 1500)
+    
+    # Format keyword variations
+    variations_text = ", ".join(variations[:10]) if variations else "None"
+    
+    # Get LSI limit from requirements (default 100)
+    lsi_limit = requirements.get('lsi_limit', 100)
+    
+    # Get top N LSI keywords based on user preference
+    lsi_formatted_100 = ""
+    if isinstance(lsi_dict, dict) and lsi_dict:
+        # Sort by frequency and take top N based on lsi_limit
+        top_lsi_keywords = sorted(lsi_dict.items(), key=lambda x: x[1], reverse=True)[:min(lsi_limit, len(lsi_dict))]
+        lsi_formatted_100 = "\n".join([f"- '{kw}' => use at least {freq} times" for kw, freq in top_lsi_keywords])
+    elif isinstance(lsi_dict, list) and lsi_dict:
+        # For list format, assume frequency of 1 for each keyword
+        lsi_keywords_subset = lsi_dict[:min(lsi_limit, len(lsi_dict))]
+        lsi_formatted_100 = "\n".join([f"- '{kw}' => use at least 1 time" for kw in lsi_keywords_subset])
+    
+    if not lsi_formatted_100:
+        lsi_formatted_100 = "- No LSI keywords available\n"
+    
+    # Format entities
+    if entities:
+        entities_text = "\n".join([f"- {entity}" for entity in entities[:20]])
+    else:
+        entities_text = "- No specific entities required"
+    
+    # Get meta information if available
     meta_title = requirements.get('meta_title', '')
     meta_description = requirements.get('meta_description', '')
     
-    # Format keyword variations, LSI keywords, and entities for the prompt
-    variations_text = ", ".join(variations[:10]) if variations else "None"
-    lsi_formatted = "\n".join([f"- '{kw}' => use at least {freq} times" for kw, freq in lsi_dict.items()])
-    entities_text = "\n".join([f"- {entity}" for entity in entities])
+    # If meta information is not in requirements, check if it's in meta_and_headings
+    if not meta_title and 'meta_and_headings' in requirements:
+        meta_title = requirements.get('meta_and_headings', {}).get('meta_title', '')
+        meta_description = requirements.get('meta_and_headings', {}).get('meta_description', '')
+    
+    # Ensure heading structure is sanitized
+    if not heading_structure or not heading_structure.strip():
+        heading_structure = "# " + primary_keyword
     
     # Construct the system prompt
     system_prompt = """You are an expert SEO content writer with deep knowledge about creating high-quality, engaging, and optimized content."""
     
     # Construct the user prompt for content generation
     user_prompt = f"""
-    # SEO Content Writing Task
+# SEO Content Writing Task
+
+Please write a comprehensive, SEO-optimized article about **{primary_keyword}**. 
     
-    Please write a comprehensive, SEO-optimized article about **{primary_keyword}**. 
+1. Meta Information (do not change or add to it):
+- Meta Title: {meta_title}
+- Meta Description: {meta_description}
     
-    ## Meta Information
-    - Meta Title: {meta_title}
-    - Meta Description: {meta_description}
+2. Key Requirements:
+- Word Count: {word_count} words (minimum). Must be no less than {word_count} but no more than {word_count + 100}
+- Primary Keyword: {primary_keyword}
+- Use the EXACT following heading structure (do not change or add to it):
+<headings_structure>
+{heading_structure}
+</headings_structure>
     
-    ## Key Requirements:
-    - Word Count: {word_count} words (minimum)
-    - Primary Keyword: {primary_keyword}
-    - Use the EXACT following heading structure (do not change or add to it):
+3. Keyword Usage Requirements:
+- Use the primary keyword ({primary_keyword}) in the first 100 words, in at least one H2 heading, and naturally throughout the content.
+- Include these keyword variations naturally: {variations_text}
     
-    {heading_structure}
+4. LSI Keywords to Include (with minimum frequencies):
+{lsi_formatted_100}
     
-    ## Keyword Usage Requirements:
-    - Use the primary keyword ({primary_keyword}) in the first 100 words, in at least one H2 heading, and naturally throughout the content.
-    - Include these keyword variations naturally: {variations_text}
+5. Entities/Topics to Cover:
+{entities_text}
     
-    ## LSI Keywords to Include (with minimum frequencies):
-    {lsi_formatted}
-    
-    ## Entities/Topics to Cover:
-    {entities_text}
-    
-    ## Content Writing Guidelines:
-    1. Write in a clear, authoritative style suitable for an expert audience
-    2. Make the content deeply informative and comprehensive
-    3. Always write in active voice and maintain a conversational but professional tone
-    4. Include only factually accurate information
-    5. Ensure the content flows naturally between sections
-    6. Include the primary keyword in the first 100 words of the content
-    7. Format the content using markdown
-    8. DO NOT include any introductory notes, explanations, or meta-commentary about your process
-    9. DO NOT use placeholder text or suggest that the client should add information
-    10. DO NOT use the phrases "in conclusion" or "in summary" for the final section
-    
-    IMPORTANT: Return ONLY the pure markdown content without any explanations, introductions, or notes about your approach.
-    """
+6. Content Writing Guidelines:
+- 1. Write in a clear, authoritative style suitable for an expert audience
+- 2. Make the content deeply informative and comprehensive
+- 3. Always write in active voice and maintain a conversational but professional tone
+- 4. Include only factually accurate information
+- 5. Ensure the content flows naturally between sections
+- 6. Include the primary keyword in the first 100 words of the content
+- 7. Format the content using markdown
+- 8. DO NOT include any introductory notes, explanations, or meta-commentary about your process
+- 9. DO NOT use placeholder text or suggest that the client should add information
+- 10. DO NOT use the phrases "in conclusion" or "in summary" for the final section
+
+IMPORTANT: Return ONLY the pure markdown content without any explanations, introductions, or notes about your approach.
+"""
     
     # Save the prompt to a file for reference
-    with open("content_prompt.txt", "w") as f:
+    with open("content_prompt.txt", "w", encoding="utf-8") as f:
         f.write(user_prompt)
     
     # Call the API based on the settings
     if settings.get('model', '').lower() == 'claude' and settings.get('anthropic_api_key'):
-        result = call_claude_api(system_prompt, user_prompt, settings.get('anthropic_api_key'))
+        result, token_usage = call_claude_api(system_prompt, user_prompt, settings.get('anthropic_api_key'), is_content_generation=True)
     else:
         # Default to Claude if no valid settings are provided
         if settings.get('anthropic_api_key'):
-            result = call_claude_api(system_prompt, user_prompt, settings.get('anthropic_api_key'))
+            result, token_usage = call_claude_api(system_prompt, user_prompt, settings.get('anthropic_api_key'), is_content_generation=True)
         else:
             raise ValueError("No valid API key provided. Please provide either an Anthropic or OpenAI API key.")
     
     # Process the result to get clean markdown
     markdown_content = extract_markdown_content(result)
+    
+    # Ensure we have content
+    if not markdown_content or len(markdown_content.strip()) < 100:
+        # If extraction failed, use the full response but try to clean it
+        markdown_content = result.strip()
     
     # Convert to HTML
     html_content = markdown_to_html(markdown_content)
@@ -558,7 +721,13 @@ def generate_content_from_headings(requirements, heading_structure, settings=Non
     with open(filename, "w", encoding="utf-8") as f:
         f.write(markdown_content)
     
-    return markdown_content, html_content, filename
+    # Return results as a dictionary with all necessary information
+    return {
+        'markdown': markdown_content,
+        'html': html_content,
+        'filename': filename,
+        'token_usage': token_usage
+    }
 
 def generate_content(requirements, settings=None):
     """Legacy function that combines both steps for backward compatibility."""
@@ -625,7 +794,6 @@ def extract_html_from_response(response_text):
 def extract_markdown_content(response_text):
     """
     Extracts clean markdown content from an API response.
-    Similar to extract_markdown_from_response but ensures we get just the content.
     
     Args:
         response_text (str): The raw response text from the API
@@ -638,25 +806,37 @@ def extract_markdown_content(response_text):
     if markdown_match:
         return markdown_match.group(1).strip()
     
-    # If no code blocks, just return the response text
-    # but attempt to clean up any preamble or postamble text
+    # If no code blocks, check for common formats Claude uses
+    # Look for content structure markers (headings)
+    heading_pattern = r'^#+ '
+    
+    # Return the full response text but clean up obvious assistant preambles/postambles
     lines = response_text.split("\n")
-    content_started = False
     content_lines = []
+    skip_line = False
+    content_started = False
     
     for line in lines:
-        # Skip common preambles
+        # Skip known preamble patterns
         if not content_started:
-            if line.strip().startswith("Here's") or line.strip().startswith("I've") or line.strip() == "":
+            if (line.strip() == "" or 
+                line.strip().startswith("Here's") or 
+                line.strip().startswith("I've created") or
+                line.strip().startswith("Here is")):
                 continue
-            else:
+            if re.match(heading_pattern, line.strip()) or line.strip().startswith('*') or line.strip().startswith('-'):
+                content_started = True
+            elif len(line.strip()) > 0:
                 content_started = True
         
-        # Stop at common postambles
-        if line.strip().startswith("Let me know") or line.strip().startswith("Is there"):
-            break
-            
-        content_lines.append(line)
+        # Skip known postamble patterns - only if they're isolated lines and not part of content
+        if (line.strip() == "Let me know if you need any revisions." or
+            line.strip() == "Let me know if you would like any changes." or
+            line.strip() == "Is there anything else you'd like me to help with?"):
+            skip_line = True
+        
+        if content_started and not skip_line:
+            content_lines.append(line)
     
     return "\n".join(content_lines).strip()
 
@@ -694,64 +874,11 @@ def markdown_to_html(markdown_content):
         </style>
     </head>
     <body>
-        {markdown_content}
+        {html_content}
     </body>
     </html>
     """
     return html
-
-##############################################################################
-# GENERATE INITIAL HTML
-##############################################################################
-def generate_initial_html(markdown_content, api_key):
-    """Converts markdown to HTML."""
-    system_prompt = """You are an expert web developer specializing in converting markdown to clean, semantic HTML.
-    Your task is to convert the provided markdown content into valid HTML5 that follows best practices.
-
-    Instructions:
-    1. Convert all markdown syntax to proper HTML5 elements
-    2. Ensure all headings (h1-h5) maintain their hierarchy
-    3. Apply proper HTML semantics (article, section, etc.) where appropriate
-    4. Convert markdown lists to proper HTML lists (ul/ol with li elements)
-    5. Convert emphasis and strong formatting to appropriate HTML tags
-    6. Format the HTML with proper indentation for readability
-    7. Do not add any CSS or JavaScript
-    8. Return ONLY the HTML code without any explanation
-    """
-
-    user_prompt = f"""Please convert this markdown content to clean, semantic HTML5:
-
-{markdown_content}
-
-Return ONLY the HTML code.
-    """
-    if platform == "Claude":
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-3-7-sonnet-latest",
-            max_tokens=4096,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}]
-        )
-        html_content = extract_html_from_response(response.content[0].text)
-    else:
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=chatgpt_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            max_tokens=4096
-        )
-        html_content = extract_html_from_response(response.choices[0].message.content)
-    
-    filename = f"{OUTPUT_DIR}/output.html"
-    with open(filename, "w", encoding="utf-8") as f:
-        f.write(html_content)
-    
-    print(f"✅ HTML saved to {filename}")
-    return html_content
 
 ##############################################################################
 # MAIN FUNCTION
