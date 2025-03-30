@@ -159,8 +159,10 @@ def render_extracted_data():
         # Roadmap Requirements (excluding heading counts)
         roadmap_reqs = requirements.get("requirements", {})
         if roadmap_reqs:
-            filtered_reqs = {k: v for k, v in roadmap_reqs.items() 
-                             if not k.startswith("Number of H") and k != "Number of heading tags"}
+            filtered_reqs = {
+                k: v for k, v in roadmap_reqs.items() 
+                if not k.startswith("Number of H") and k != "Number of heading tags" and k not in ["CP480", "CP380"]
+            }
             if filtered_reqs:
                 st.markdown("**Roadmap Requirements:**")
                 roadmap_df = pd.DataFrame({
@@ -746,11 +748,15 @@ if st.session_state.get("step", 1) == 2:
     with col1:
         generate_button = st.button("Generate Meta Title, Description and Headings", use_container_width=True)
     with col2:
-        if st.button("See Prompt", type="secondary", use_container_width=True):
+        if st.button("See Prompt", key="fullprompt", type="secondary", use_container_width=True):
             primary_keyword = st.session_state.requirements.get('primary_keyword', '[primary keyword]')
+            # Add this line to define variations:
+            variations = st.session_state.requirements.get('variations', [])
             word_count = st.session_state.requirements.get('word_count', 1500)
+
             meta_title_length = st.session_state.requirements.get('requirements', {}).get('CP480', 60)
             meta_desc_length = st.session_state.requirements.get('requirements', {}).get('CP380', 160)
+
             lsi_keywords = st.session_state.requirements.get('lsi_keywords', [])
             lsi_formatted = ""
             if isinstance(lsi_keywords, dict) and lsi_keywords:
@@ -761,9 +767,12 @@ if st.session_state.get("step", 1) == 2:
                     lsi_formatted += f"{keyword}, "
             else:
                 lsi_formatted = "No LSI keywords available\n"
+                    
             entities = st.session_state.requirements.get('entities', [])[:20] if st.session_state.requirements.get('entities') else []
             entities_text = "\n".join([f"- {entity}" for entity in entities])
+                    
             heading_structure = st.session_state.configured_headings if 'configured_headings' in st.session_state else {"h2": 4, "h3": 8, "h4": 0, "h5": 0, "h6": 0}
+                
             prompt_content = f"""Please create a meta title, meta description, and heading structure for an article about "{primary_keyword}".
 
 <requirements>
