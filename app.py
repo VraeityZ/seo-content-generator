@@ -590,7 +590,7 @@ if st.session_state.get("step", 1) == 2.5:
     
     col1, col2 = st.columns(2)
     with col1:
-        generate_button = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
+        generate_full_content = st.button("Generate Full Content", use_container_width=True, on_click=generate_full_content_button)
     with col2:
         if st.button("See Prompt", key="fullprompt", type="secondary", use_container_width=True):
             primary_keyword = st.session_state.requirements.get('primary_keyword', '[primary keyword]')
@@ -655,31 +655,6 @@ Please write a comprehensive, SEO-optimized article about **{primary_keyword}**.
   
 IMPORTANT: Return ONLY the pure markdown content without any explanations, introductions, or notes about your approach."""
             show_prompt_modal("Content Generation Prompt", prompt_content)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        generate_button = st.button("Generate Content", use_container_width=True)
-    
-    if generate_button:
-        if not st.session_state.get('anthropic_api_key', ''):
-            st.error("Please enter your Anthropic API key in the sidebar.")
-        else:
-            st.session_state.meta_and_headings["meta_title"] = meta_title_input
-            st.session_state.meta_and_headings["meta_description"] = meta_description_input
-            st.session_state.meta_and_headings["heading_structure"] = heading_structure_input
-                
-            st.session_state.requirements['word_count'] = word_count_input
-            st.session_state.requirements['lsi_limit'] = lsi_limit_input
-                
-            settings = {
-                'model': 'claude',
-                'anthropic_api_key': st.session_state.get('anthropic_api_key', ''),
-            }
-            
-            st.session_state['auto_generate_content'] = True
-            
-            st.session_state['step'] = 3
-            st.rerun()
     
     if st.button("Back to Requirements"):
         st.session_state['step'] = 2
