@@ -845,8 +845,7 @@ def extract_markdown_content(response_text):
 ##############################################################################
 def markdown_to_html(markdown_content):
     """
-    Simple conversion of markdown to HTML.
-    In a real implementation, this would use a proper markdown parser.
+    Convert markdown to HTML.
     
     Args:
         markdown_content (str): Markdown content to convert
@@ -854,30 +853,50 @@ def markdown_to_html(markdown_content):
     Returns:
         str: HTML content
     """
-    # This is a very simple placeholder implementation
-    # In a real application, you'd use a library like markdown2 or similar
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Generated Content</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
-            h1 {{ color: #333; }}
-            h2 {{ color: #444; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
-            h3 {{ color: #555; }}
-            code {{ background-color: #f5f5f5; padding: 2px 4px; border-radius: 4px; }}
-            pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; }}
-            blockquote {{ border-left: 4px solid #ddd; padding-left: 10px; color: #666; }}
-            a {{ color: #0366d6; text-decoration: none; }}
-            a:hover {{ text-decoration: underline; }}
-        </style>
-    </head>
-    <body>
-        {markdown_content}
-    </body>
-    </html>
-    """
+    try:
+        import markdown
+        # Convert markdown to HTML
+        converted_html = markdown.markdown(markdown_content)
+        
+        # Wrap in HTML document with styling
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Generated Content</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
+                h1 {{ color: #333; }}
+                h2 {{ color: #444; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
+                h3 {{ color: #555; }}
+                code {{ background-color: #f5f5f5; padding: 2px 4px; border-radius: 4px; }}
+                pre {{ background-color: #f5f5f5; padding: 10px; border-radius: 4px; overflow-x: auto; }}
+                blockquote {{ border-left: 4px solid #ddd; padding-left: 10px; color: #666; }}
+                a {{ color: #0366d6; text-decoration: none; }}
+                a:hover {{ text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            {converted_html}
+        </body>
+        </html>
+        """
+    except ImportError:
+        # Fallback if markdown library isn't available
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Generated Content</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
+            </style>
+        </head>
+        <body>
+            <pre>{markdown_content}</pre>
+        </body>
+        </html>
+        """
     return html
 
 ##############################################################################
