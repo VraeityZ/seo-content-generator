@@ -874,7 +874,7 @@ def markdown_to_html(markdown_content):
         </style>
     </head>
     <body>
-        {html_content}
+        {markdown_content}
     </body>
     </html>
     """
