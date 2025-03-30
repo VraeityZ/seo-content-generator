@@ -62,6 +62,13 @@ st.markdown("""
 # Utility function to analyze content
 def analyze_content(markdown_content, requirements):
     """Analyze the generated content against the SEO requirements."""
+    # Clean text: remove markdown formatting and punctuation for accurate matching
+    clean_text = markdown_content.lower()
+    clean_text = re.sub(r'[#*_`~]', ' ', clean_text)         # remove markdown symbols
+    clean_text = re.sub(r'<[^>]+>', ' ', clean_text)           # remove HTML tags if any
+    clean_text = re.sub(r'[^\w\s]', ' ', clean_text)           # remove punctuation
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()       # normalize whitespace
+
     analysis = {
         "primary_keyword": requirements.get("primary_keyword", ""),
         "primary_keyword_count": 0,
@@ -72,18 +79,13 @@ def analyze_content(markdown_content, requirements):
         "entities": {}
     }
     
-    # Remove markdown formatting from content for more accurate word counting
-    # This is a simple approach - for production, consider using a proper markdown parser
-    text_content = re.sub(r'[#*_`~]', ' ', markdown_content)
-    
-    # Use word boundaries to ensure we only count whole words
-    words = re.findall(r'\b\w+\b', text_content.lower())
+    # Count words using the cleaned text
+    words = clean_text.split()
     analysis["word_count"] = len(words)
     
     primary_keyword = requirements.get("primary_keyword", "").lower()
     if primary_keyword:
-        # Ensure we only count complete keyword matches with word boundaries
-        analysis["primary_keyword_count"] = len(re.findall(rf'\b{re.escape(primary_keyword)}\b', text_content.lower()))
+        analysis["primary_keyword_count"] = len(re.findall(rf'\b{re.escape(primary_keyword)}\b', clean_text))
     
     heading_pattern = r"^(#{1,6})\s+(.+)$"
     for line in markdown_content.split("\n"):
@@ -97,7 +99,7 @@ def analyze_content(markdown_content, requirements):
     if variations:
         analysis["variations"] = {}
         for var in variations:
-            count = len(re.findall(rf'\b{re.escape(var.lower())}\b', text_content.lower()))
+            count = len(re.findall(rf'\b{re.escape(var.lower())}\b', clean_text))
             status = "✅" if count > 0 else "❌"
             analysis["variations"][var] = {
                 "count": count,
@@ -107,12 +109,10 @@ def analyze_content(markdown_content, requirements):
     # Process LSI keywords
     lsi_keywords = requirements.get("lsi_keywords", {})
     if isinstance(lsi_keywords, list):
-        lsi_keywords_dict = {kw: 1 for kw in lsi_keywords}
-        lsi_keywords = lsi_keywords_dict
+        lsi_keywords = {kw: 1 for kw in lsi_keywords}
 
     for keyword, target_count in lsi_keywords.items():
-        # Ensure we only count complete keyword matches with word boundaries
-        count = len(re.findall(rf'\b{re.escape(keyword.lower())}\b', text_content.lower()))
+        count = len(re.findall(rf'\b{re.escape(keyword.lower())}\b', clean_text))
         status = "✅" if count >= target_count else "❌"
         analysis["lsi_keywords"][keyword] = {
             "count": count,
@@ -123,8 +123,7 @@ def analyze_content(markdown_content, requirements):
     # Process entities
     entities = requirements.get("entities", [])
     for entity in entities:
-        # Ensure we only count complete entity matches with word boundaries
-        count = len(re.findall(rf'\b{re.escape(entity.lower())}\b', text_content.lower()))
+        count = len(re.findall(rf'\b{re.escape(entity.lower())}\b', clean_text))
         status = "✅" if count > 0 else "❌"
         analysis["entities"][entity] = {
             "count": count,
@@ -132,6 +131,7 @@ def analyze_content(markdown_content, requirements):
         }
         
     return analysis
+
 
 def render_extracted_data():
     """
