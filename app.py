@@ -412,6 +412,7 @@ def generate_content_flow():
                 box-shadow: 0px 0px 5px 2px rgb(87 87 87 / 35%);
                 height: 400px;
             }
+            .content-preview h1, .content-preview h2, .content-preview h3, .content-preview h4, .content-preview h5, .content-preview h6 { color: #fff; }
             .content-preview h1 { font-size: 28px; margin-top: 20px; }
             .content-preview h2 { font-size: 24px; margin-top: 18px; }
             .content-preview h3 { font-size: 20px; margin-top: 16px; }
