@@ -500,23 +500,6 @@ if st.session_state.get("step", 1) == 2.5:
     if 'original_requirements' not in st.session_state and 'requirements' in st.session_state:
         st.session_state['original_requirements'] = st.session_state['requirements'].copy()
     
-    if st.button("↩️ Revert to Original Generated Content", type="secondary"):
-        if 'original_meta_and_headings' in st.session_state:
-            st.session_state['meta_and_headings'] = dict(st.session_state['original_meta_and_headings'])
-            if 'original_requirements' in st.session_state:
-                for heading_key in ['Number of H2 tags', 'Number of H3 tags', 'Number of H4 tags', 
-                                  'Number of H5 tags', 'Number of H6 tags', 'Number of heading tags']:
-                    if heading_key in st.session_state['original_requirements'].get('requirements', {}):
-                        st.session_state['requirements']['requirements'][heading_key] = \
-                            st.session_state['original_requirements']['requirements'][heading_key]
-                if 'word_count' in st.session_state['original_requirements']:
-                    st.session_state['requirements']['word_count'] = \
-                        st.session_state['original_requirements']['word_count']
-                if 'lsi_limit' in st.session_state['original_requirements']:
-                    st.session_state['requirements']['lsi_limit'] = \
-                        st.session_state['original_requirements']['lsi_limit']
-            st.rerun()
-    
     meta_title_input = st.text_input(
         "Meta Title", 
         value=meta_and_headings.get("meta_title", ""), 
