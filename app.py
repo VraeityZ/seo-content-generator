@@ -384,6 +384,7 @@ def generate_content_flow():
             </style>
             """, unsafe_allow_html=True)
             html_with_styles = f'<div class="content-preview">{st.session_state["generated_html"]}</div>'
+            print(html_with_styles)
             st.html(html_with_styles)
         
         with tab2:
