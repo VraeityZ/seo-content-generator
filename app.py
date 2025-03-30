@@ -213,7 +213,7 @@ def render_extracted_data():
             cs = st.session_state["configured_settings"]
             st.markdown("### Configured Settings (Content)")
             st.write(f"Word Count Target: {cs.get('word_count', 'N/A')}")
-  
+   
 # Create a modal dialog to show prompts
 def show_prompt_modal(prompt_title, prompt_content):
     """Show a popup modal with the full prompt."""
