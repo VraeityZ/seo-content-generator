@@ -352,6 +352,9 @@ def generate_content_flow():
                         output_cost = (token_usage['output_tokens'] / 1000000) * 15
                         total_cost = input_cost + output_cost
                         
+                        # Save content token usage to session state for persistence
+                        st.session_state['content_token_usage'] = token_usage
+                        
                         st.sidebar.markdown("### Content Generation Token Usage")
                         col1, col2, col3 = st.sidebar.columns(3)
                         col1.metric("Input Tokens", token_usage['input_tokens'], delta=f"${input_cost:.4f}", delta_color="off")
@@ -359,6 +362,7 @@ def generate_content_flow():
                         col3.metric("Total Tokens", token_usage['total_tokens'], delta=f"${total_cost:.4f}", delta_color="off")
                         
                         # Preserve heading generation token usage if it exists
+                        heading_total_cost = 0
                         if 'heading_token_usage' in st.session_state:
                             heading_token_usage = st.session_state['heading_token_usage']
                             heading_input_cost = (heading_token_usage['input_tokens'] / 1000000) * 3
@@ -370,6 +374,11 @@ def generate_content_flow():
                             col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
                             col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off")
                             col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
+                        
+                        # Display combined total cost
+                        combined_total_cost = total_cost + heading_total_cost
+                        st.sidebar.markdown("### Combined Total Cost")
+                        st.sidebar.metric("Total Article Cost", f"${combined_total_cost:.4f}")
                     
                     status.update(label="✅ Content generated successfully!", state="complete")
                 print("CONTENT_FLOW: Content saved to session state, forcing rerun")
@@ -730,6 +739,22 @@ if st.session_state.get("step", 1) == 2:
                         
                         meta_and_headings = generate_meta_and_headings(requirements, settings)
                         status.write("✅ Response received! Processing results...")
+                        
+                        # Save token usage information to session state
+                        if 'token_usage' in meta_and_headings:
+                            st.session_state['heading_token_usage'] = meta_and_headings['token_usage']
+                            
+                            # Display token usage for heading generation in sidebar
+                            heading_token_usage = meta_and_headings['token_usage']
+                            heading_input_cost = (heading_token_usage['input_tokens'] / 1000000) * 3
+                            heading_output_cost = (heading_token_usage['output_tokens'] / 1000000) * 15
+                            heading_total_cost = heading_input_cost + heading_output_cost
+                            
+                            st.sidebar.markdown("### Heading Generation Token Usage")
+                            col1, col2, col3 = st.sidebar.columns(3)
+                            col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
+                            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off") 
+                            col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
                         
                         st.session_state['meta_and_headings'] = meta_and_headings
                         st.session_state['original_meta_and_headings'] = dict(meta_and_headings)
