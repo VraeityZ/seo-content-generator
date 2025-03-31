@@ -531,8 +531,12 @@ def generate_content_flow():
             with st.spinner("Analyzing content..."):
                 html_content = st.session_state['generated_html']
                 analysis = analyze_content(html_content, st.session_state.requirements)
-                st.write(f"Meta Title: {meta_title_input}")
-                st.write(f"Meta Description: {meta_description_input}")
+                # Get meta title and description from session state instead of direct variables
+                meta_title = st.session_state.meta_and_headings.get("meta_title", "")
+                meta_description = st.session_state.meta_and_headings.get("meta_description", "")
+
+                st.write(f"**Meta Title:** {meta_title}")
+                st.write(f"**Meta Description:** {meta_description}")
                 st.markdown("### Content Analysis")
                 st.write(f"**Primary Keyword:** {analysis['primary_keyword']}")
                 st.write(f"**Primary Keyword Count:** {analysis['primary_keyword_count']}")
