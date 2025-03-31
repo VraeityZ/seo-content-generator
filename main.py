@@ -357,7 +357,7 @@ def call_claude_api(system_prompt, user_prompt, api_key, is_content_generation=F
     
     # Use different token budgets based on the type of generation
     max_tokens = 14500 if is_content_generation else 4500
-    thinking_budget = 14000 if is_content_generation else 3500
+    thinking_budget = 14000 if is_content_generation else 4000
     
     # Print debug information
     print(f"Calling Claude API:")

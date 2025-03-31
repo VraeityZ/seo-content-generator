@@ -735,6 +735,71 @@ if st.session_state.get("step", 1) == 2.5:
         help="Edit the generated heading structure if needed."
     )
     
+    # Calculate and display the heading count comparison
+    if heading_structure_input:
+        # Get the most up-to-date heading requirements (either from CORA or user modifications)
+        required_headings = {
+            "h1": 1,  # Always expect 1 H1 tag
+        }
+        
+        # Check if user has configured custom heading counts
+        if 'configured_headings' in st.session_state:
+            required_headings.update({
+                "h2": st.session_state.configured_headings.get('h2', 0),
+                "h3": st.session_state.configured_headings.get('h3', 0),
+                "h4": st.session_state.configured_headings.get('h4', 0),
+                "h5": st.session_state.configured_headings.get('h5', 0),
+                "h6": st.session_state.configured_headings.get('h6', 0)
+            })
+        else:
+            # Fall back to original CORA requirements if no user modifications
+            required_headings.update({
+                "h2": requirements.get('requirements', {}).get('Number of H2 tags', 0),
+                "h3": requirements.get('requirements', {}).get('Number of H3 tags', 0),
+                "h4": requirements.get('requirements', {}).get('Number of H4 tags', 0),
+                "h5": requirements.get('requirements', {}).get('Number of H5 tags', 0),
+                "h6": requirements.get('requirements', {}).get('Number of H6 tags', 0)
+            })
+        
+        # Count actual headings in the markdown
+        actual_headings = {"h1": 0, "h2": 0, "h3": 0, "h4": 0, "h5": 0, "h6": 0}
+        
+        for line in heading_structure_input.split('\n'):
+            if line.strip().startswith('#'):
+                # Count consecutive # symbols at the start of the line
+                heading_level = 0
+                for char in line.strip():
+                    if char == '#':
+                        heading_level += 1
+                    else:
+                        break
+                
+                if 1 <= heading_level <= 6:
+                    actual_headings[f"h{heading_level}"] += 1
+        
+        # Display the heading count comparison
+        st.write("### Heading Count Comparison")
+        
+        col1, col2, col3 = st.columns(3)
+        col1.markdown("**Heading Level**")
+        col2.markdown("**Required Count**")
+        col3.markdown("**Actual Count**")
+        
+        total_required = sum(required_headings.values())
+        total_actual = sum(actual_headings.values())
+        
+        for level in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+            req_count = required_headings[level]
+            act_count = actual_headings[level]
+            col1.markdown(f"**{level.upper()}**")
+            col2.markdown(f"{req_count}")
+            col3.markdown(f"{act_count}")
+        
+        # Display the total
+        col1.markdown("**TOTAL**")
+        col2.markdown(f"**{total_required}**")
+        col3.markdown(f"**{total_actual}**")
+    
     def generate_full_content_button():
         print("===== GENERATE FULL CONTENT BUTTON CLICKED =====")
         if 'generated_markdown' in st.session_state:
@@ -878,7 +943,7 @@ if st.session_state.get("step", 1) == 2:
                             st.sidebar.markdown("### Heading Generation Token Usage")
                             col1, col2, col3 = st.sidebar.columns(3)
                             col1.metric("Input Tokens", heading_token_usage['input_tokens'], delta=f"${heading_input_cost:.4f}", delta_color="off")
-                            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off") 
+                            col2.metric("Output Tokens", heading_token_usage['output_tokens'], delta=f"${heading_output_cost:.4f}", delta_color="off")
                             col3.metric("Total Tokens", heading_token_usage['total_tokens'], delta=f"${heading_total_cost:.4f}", delta_color="off")
                         
                         st.session_state['meta_and_headings'] = meta_and_headings
