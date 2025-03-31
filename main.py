@@ -484,8 +484,9 @@ def generate_meta_and_headings(requirements, settings=None):
     
     # Prepare the system and user prompts
     system_prompt = """
-You are a professional SEO content strategist and copywriter. Your job is to create optimized content strategies that rank well in search engines. Right now your task is to first generate a user friendly page structure utilizing the headings as specified and required by the user.
-    """
+You are a professional SEO content strategist and copywriter. Your job is to create optimized content strategies that rank well in search engines. Your task is to generate a user friendly heading outline utilizing the headings as specified and required by the user.
+You have a strong understanding of SEO best practices, entity based SEO and semantic SEO. You write content that ranks well in search engine results. You are also an expert in content writing and can write content that is engaging and informative. You understand the needs of the client and their desired and strict requirements. You will not deviate from the requirements. You are capable of following the requirements strictly. You are creative and capable of delivering content that stays topically and semantically relevent to the specific page.
+"""
     
     user_prompt_heading = f"""
 Please create a meta title, meta description, and heading structure for a piece of content about "{primary_keyword}".
@@ -646,7 +647,7 @@ def generate_content_from_headings(requirements, heading_structure, settings=Non
         heading_structure = "# " + primary_keyword
     
     # Construct the system prompt
-    system_prompt = """You are an expert SEO content writer with deep knowledge about creating high-quality, engaging, and optimized content."""
+    system_prompt = """You are an expert SEO content writer with deep knowledge about creating high-quality, engaging, and optimized content. You have a strong understanding of SEO best practices, entity based SEO and semantic SEO. You write content that ranks well in search engine results. You are also an expert in content writing and can write content that is engaging and informative. You understand the needs of the client and their desired and strict word count requirements. You will not deviate from the requirements. You will not add or remove any content from the headings structure. You are capable of following the requirements strictly. You are capable of detecting when content is locally based and will generate content to help in Local Search Rankings by seemlessly making accurate local references."""
     
     # Construct the user prompt for content generation
     user_prompt = f"""
@@ -659,7 +660,7 @@ Please write a comprehensive, SEO-optimized article about **{primary_keyword}**.
 - Meta Description: {meta_description}
     
 2. Key Requirements:
-- Word Count: {word_count} words (minimum). Must be no less than {word_count} but no more than {word_count + 100}
+- Word Count: {word_count} words (minimum). This word count is extremely strict. Must be no less than {word_count} but no more than {word_count + 100}. 
 - Primary Keyword: {primary_keyword}
 - Use the EXACT following heading structure to generate content (**very important**: do not change or add to the headings):
 <headings_structure>
@@ -668,25 +669,30 @@ Please write a comprehensive, SEO-optimized article about **{primary_keyword}**.
     
 3. Keyword Usage Requirements:
 - Use the primary keyword ({primary_keyword}) in the first 100 words, in at least one H2 heading, and naturally throughout the content.
-- Include these keyword variations naturally: {variations_text}
+
+4. Keyword Variations:
+- Include these keyword variations naturally: **note**: use at least 1 time each is your primary goal in this sub-step
+{variations_text}
     
-4. LSI Keywords to Include (with minimum frequencies):
+5. LSI Keywords to Include (with minimum frequencies): **note**: use at least 1 time each is your primary goal in this sub-step
 {lsi_formatted_100}
     
-5. Entities/Topics to Cover:
+6. Entities/Topics to Cover: **Note**: Your primary goal in this sub-step is to use each entity at least once within the content with a secondary goal of 8-10% entity density**
 {entities_text}
     
-6. Content Writing Guidelines:
+7. Content Writing Guidelines:
 - 1. Write in a clear, authoritative style suitable for an expert audience
 - 2. Make the content deeply informative and comprehensive
 - 3. Always write in active voice and maintain a conversational but professional tone
 - 4. Include only factually accurate information
 - 5. Ensure the content flows naturally between sections
 - 6. Include the primary keyword in the first 100 words of the content
-- 7. Format the content using markdown
-- 8. DO NOT include any introductory notes, explanations, or meta-commentary about your process
-- 9. DO NOT use placeholder text or suggest that the client should add information
-- 10. DO NOT use the phrases "in conclusion" or "in summary" for the final section
+- 7. Variations, LSI keywords, and entities are used at least once when possible.
+- 8. Format the content using markdown
+- 9. DO NOT include any introductory notes, explanations, or meta-commentary about your process
+- 10. DO NOT use placeholder text or suggest that the client should add information
+- 11. DO NOT use the phrases "in conclusion" or "in summary" for the final section
+- 12. Word count must be around {word_count} words. Verify this, if the word count is far more than {word_count} words, return the content with the word count adjusted to meet the requirement.
 
 IMPORTANT: Return ONLY the pure markdown content without any explanations, introductions, or notes about your approach.
 """
