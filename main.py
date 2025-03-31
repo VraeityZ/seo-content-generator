@@ -661,7 +661,7 @@ Please write a comprehensive, SEO-optimized article about **{primary_keyword}**.
 2. Key Requirements:
 - Word Count: {word_count} words (minimum). Must be no less than {word_count} but no more than {word_count + 100}
 - Primary Keyword: {primary_keyword}
-- Use the EXACT following heading structure (do not change or add to it):
+- Use the EXACT following heading structure to generate content (**very important**: do not change or add to the headings):
 <headings_structure>
 {heading_structure}
 </headings_structure>

@@ -531,7 +531,8 @@ def generate_content_flow():
             with st.spinner("Analyzing content..."):
                 html_content = st.session_state['generated_html']
                 analysis = analyze_content(html_content, st.session_state.requirements)
-                
+                st.write(f"Meta Title: {meta_title_input}")
+                st.write(f"Meta Description: {meta_description_input}")
                 st.markdown("### Content Analysis")
                 st.write(f"**Primary Keyword:** {analysis['primary_keyword']}")
                 st.write(f"**Primary Keyword Count:** {analysis['primary_keyword_count']}")
@@ -674,7 +675,7 @@ if st.session_state.get("step", 1) == 2.5:
     )
     
     ideal_title_length = requirements.get('requirements', {}).get('CP480', 60)
-    min_title_length = max(int(ideal_title_length * 0.8), 40)
+    min_title_length = max(int(ideal_title_length * 0.95), 40)
     
     meta_title_chars = len(meta_title_input)
     st.caption(f"Character count: {meta_title_chars}/{ideal_title_length} " + 
@@ -688,7 +689,7 @@ if st.session_state.get("step", 1) == 2.5:
     )
     
     ideal_desc_length = requirements.get('requirements', {}).get('CP380', 160)
-    min_desc_length = max(int(ideal_desc_length * 0.75), 120)
+    min_desc_length = max(int(ideal_desc_length * 0.95), 120)
     
     meta_desc_chars = len(meta_description_input)
     st.caption(f"Character count: {meta_desc_chars}/{ideal_desc_length} " + 
