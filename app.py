@@ -296,7 +296,7 @@ def render_extracted_data():
         if st.session_state.custom_entities:
             st.markdown("**Current Custom Entities:**")
             custom_ent_df = pd.DataFrame({"Entity": st.session_state.custom_entities})
-            st.dataframe(custom_ent_df, use_container_width=True, height=100, hide_index=True)
+            st.dataframe(custom_ent_df, use_container_width=True, height=200, hide_index=True)
         
         # Roadmap Requirements (excluding heading counts)
         roadmap_reqs = requirements.get("requirements", {})
