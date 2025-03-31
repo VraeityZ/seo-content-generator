@@ -225,22 +225,91 @@ def render_extracted_data():
         else:
             st.write("**Entities:** None")
         
+        # Add custom entities input
+        st.subheader("Custom Entities")
+        st.markdown("Add your own entities that will be prioritized at the top of the entities list")
+        
+        # Initialize custom entities in session state if it doesn't exist
+        if 'custom_entities' not in st.session_state:
+            st.session_state.custom_entities = []
+        
+        # Text area for new entities (one per line or comma-separated)
+        new_entities = st.text_area(
+            "Enter custom entities (one per line or comma-separated)",
+            height=100,
+            help="Enter entities one per line or separate them with commas. These will be prioritized in content generation."
+        )
+        
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            # Button to add the entities
+            if st.button("Add Custom Entities"):
+                if new_entities:
+                    # Process the input to handle both newlines and commas
+                    # First split by newlines
+                    lines = [line.strip() for line in new_entities.split('\n')]
+                    entity_list = []
+                    
+                    # Process each line - if it contains commas, split further
+                    for line in lines:
+                        if line:  # Skip empty lines
+                            if ',' in line:
+                                # Split by comma and add each item
+                                comma_entities = [e.strip() for e in line.split(',') if e.strip()]
+                                entity_list.extend(comma_entities)
+                            else:
+                                # Add the whole line as one entity
+                                entity_list.append(line)
+                    
+                    # Save to session state
+                    st.session_state.custom_entities = entity_list
+                    
+                    # Update the requirements dictionary
+                    if 'entities' in st.session_state.requirements:
+                        # Prepend custom entities to the existing list
+                        st.session_state.requirements['entities'] = entity_list + st.session_state.requirements.get('entities', [])
+                    else:
+                        st.session_state.requirements['entities'] = entity_list
+                    
+                    st.success(f"Added {len(entity_list)} custom entities!")
+                    # Rerun to show updated entities
+                    st.rerun()
+        
+        with col2:
+            # Button to clear custom entities
+            if st.button("Clear Custom Entities"):
+                if 'custom_entities' in st.session_state and st.session_state.custom_entities:
+                    # Remove custom entities from the requirements
+                    if 'entities' in st.session_state.requirements:
+                        original_entities = st.session_state.requirements.get('entities', [])
+                        custom_count = len(st.session_state.custom_entities)
+                        # Remove the first N items (custom entities)
+                        st.session_state.requirements['entities'] = original_entities[custom_count:]
+                    
+                    # Clear from session state
+                    st.session_state.custom_entities = []
+                    st.success("Custom entities cleared!")
+                    # Rerun to show updated entities
+                    st.rerun()
+        
+        # Display current custom entities
+        if st.session_state.custom_entities:
+            st.markdown("**Current Custom Entities:**")
+            custom_ent_df = pd.DataFrame({"Entity": st.session_state.custom_entities})
+            st.dataframe(custom_ent_df, use_container_width=True, height=100, hide_index=True)
+        
         # Roadmap Requirements (excluding heading counts)
         roadmap_reqs = requirements.get("requirements", {})
-        if roadmap_reqs:
-            filtered_reqs = {
-                k: v for k, v in roadmap_reqs.items() 
-                if not k.startswith("Number of H") and k != "Number of heading tags" and k not in ["CP480", "CP380"]
-            }
-            if filtered_reqs:
-                st.markdown("**Roadmap Requirements:**")
-                roadmap_df = pd.DataFrame({
-                    "Requirement": list(filtered_reqs.keys()),
-                    "Value": list(filtered_reqs.values())
-                })
-                st.dataframe(roadmap_df, use_container_width=True, height=200, hide_index=True)
-            else:
-                st.write("**Roadmap Requirements:** None")
+        filtered_reqs = {k: v for k, v in roadmap_reqs.items() 
+                         if not k.startswith("Number of H") and k != "Number of heading tags" and k not in ["CP480", "CP380"]
+        }
+        if filtered_reqs:
+            st.markdown("**Roadmap Requirements:**")
+            roadmap_df = pd.DataFrame({
+                "Requirement": list(filtered_reqs.keys()),
+                "Value": list(filtered_reqs.values())
+            })
+            st.dataframe(roadmap_df, use_container_width=True, height=200, hide_index=True)
         else:
             st.write("**Roadmap Requirements:** None")
         
