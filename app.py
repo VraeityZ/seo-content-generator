@@ -403,8 +403,14 @@ def generate_content_flow():
                     
                     updated_requirements = dict(st.session_state.requirements)
                     
+                    # Add meta title and description to requirements for the API call
+                    updated_requirements['meta_title'] = st.session_state.meta_and_headings.get("meta_title", "")
+                    updated_requirements['meta_description'] = st.session_state.meta_and_headings.get("meta_description", "")
+                    
                     print(f"CONTENT_FLOW: Word count: {updated_requirements.get('word_count', 'Not set')}")
                     print(f"CONTENT_FLOW: LSI limit: {updated_requirements.get('lsi_limit', 'Not set')}")
+                    print(f"CONTENT_FLOW: Meta title: {updated_requirements.get('meta_title', 'Not set')}")
+                    print(f"CONTENT_FLOW: Meta description: {updated_requirements.get('meta_description', 'Not set')}")
                     
                     result = generate_content_from_headings(
                         updated_requirements,
@@ -675,7 +681,8 @@ if st.session_state.get("step", 1) == 2.5:
     meta_title_input = st.text_input(
         "Meta Title", 
         value=meta_and_headings.get("meta_title", ""), 
-        help="Edit the generated meta title if needed."
+        help="Edit the generated meta title if needed.",
+        key="meta_title_input"
     )
     
     ideal_title_length = requirements.get('requirements', {}).get('CP480', 60)
@@ -689,7 +696,8 @@ if st.session_state.get("step", 1) == 2.5:
         "Meta Description", 
         value=meta_and_headings.get("meta_description", ""), 
         height=100, 
-        help="Edit the generated meta description if needed."
+        help="Edit the generated meta description if needed.",
+        key="meta_description_input"
     )
     
     ideal_desc_length = requirements.get('requirements', {}).get('CP380', 160)
@@ -706,7 +714,8 @@ if st.session_state.get("step", 1) == 2.5:
         max_value=10000,
         value=word_count,
         step=100,
-        help="Edit the target word count for content generation."
+        help="Edit the target word count for content generation.",
+        key="word_count_input"
     )
     
     col1, col2 = st.columns(2)
@@ -718,7 +727,8 @@ if st.session_state.get("step", 1) == 2.5:
             max_value=500,
             value=lsi_limit,
             step=10,
-            help="Limit the number of LSI keywords used in content generation."
+            help="Limit the number of LSI keywords used in content generation.",
+            key="lsi_limit_input"
         )
     
     with col2:
@@ -737,7 +747,8 @@ if st.session_state.get("step", 1) == 2.5:
         "Heading Structure", 
         value=meta_and_headings.get("heading_structure", ""), 
         height=400, 
-        help="Edit the generated heading structure if needed."
+        help="Edit the generated heading structure if needed.",
+        key="heading_structure_input"
     )
     
     # Calculate and display the heading count comparison
@@ -813,6 +824,16 @@ if st.session_state.get("step", 1) == 2.5:
         if 'generated_html' in st.session_state:
             print("Clearing existing generated_html from session state")
             del st.session_state['generated_html']
+
+        # Save the edited meta title, meta description, and heading structure to session state
+        print("Updating meta title from user input")
+        st.session_state.meta_and_headings['meta_title'] = st.session_state.meta_title_input
+        
+        print("Updating meta description from user input")
+        st.session_state.meta_and_headings['meta_description'] = st.session_state.meta_description_input
+        
+        print("Updating heading structure from user input")
+        st.session_state.meta_and_headings['heading_structure'] = st.session_state.heading_structure_input
 
         if 'requirements' in st.session_state:
             # Get the word count from the input field, which should be initialized from CORA
